@@ -1,0 +1,347 @@
+version: 2
+
+# =============================================================================
+# Column-level docs + dbt tests for the lorefi_gtm project.
+# -----------------------------------------------------------------------------
+# Tests are organized as contracts: every primary key has unique + not_null,
+# every foreign key has a relationships test, every enum column has
+# accepted_values, and business invariants (net_bookings >= 0, stage order)
+# are expressed via dbt_utils.expression_is_true.
+#
+# Run all of them with `dbt test`.
+# =============================================================================
+
+models:
+
+  # ---------------------------------------------------------------------------
+  # staging
+  # ---------------------------------------------------------------------------
+
+  - name: stg_leads
+    description: One row per known lead. Cleaned + cast pass over raw_lorefi.raw_leads.
+    columns:
+      - name: lead_id
+        description: Primary key.
+        tests:
+          - unique
+          - not_null
+      - name: email
+        description: Lowercased lead email.
+        tests:
+          - not_null
+      - name: company
+        description: Self-reported company name.
+      - name: product_interest
+        description: Which Lorefi product the lead indicated interest in.
+        tests:
+          - accepted_values:
+              values: ["discover", "studio", "insights", "bundle"]
+      - name: source
+        description: Acquisition channel.
+        tests:
+          - not_null
+      - name: source_campaign
+        description: Specific campaign string within the source channel. NULL when source is `direct`.
+      - name: created_at
+        description: Lead capture timestamp.
+        tests:
+          - not_null
+      - name: owner_email
+        description: Internal Lorefi rep owning the lead.
+
+  - name: stg_opportunities
+    description: One row per opportunity. Cleaned + cast pass over raw_lorefi.raw_opportunities.
+    columns:
+      - name: opp_id
+        description: Primary key.
+        tests:
+          - unique
+          - not_null
+      - name: lead_id
+        description: FK to stg_leads.lead_id.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_leads')
+              field: lead_id
+      - name: account_id
+        description: FK to stg_accounts.account_id.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_accounts')
+              field: account_id
+      - name: stage
+        description: Current stage in the sales pipeline.
+        tests:
+          - accepted_values:
+              values: ["discovery", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"]
+      - name: amount
+        description: Booked or proposed contract value in USD.
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: ">= 0"
+              config:
+                severity: warn
+      - name: close_date
+        description: Forecasted (open) or actual (closed) close date.
+      - name: product_lines
+        description: Comma-separated list of Lorefi products on the deal.
+        tests:
+          - not_null
+      - name: seat_count
+        description: Total seats across all product lines on the opp.
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+      - name: created_at
+        description: Opportunity creation timestamp.
+        tests:
+          - not_null
+
+  - name: stg_activities
+    description: Lead behavior event stream. Cleaned + cast pass over raw_lorefi.raw_activities.
+    columns:
+      - name: activity_id
+        description: Primary key.
+        tests:
+          - unique
+          - not_null
+      - name: lead_id
+        description: FK to stg_leads.lead_id.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_leads')
+              field: lead_id
+      - name: activity_type
+        description: Type of activity captured.
+        tests:
+          - accepted_values:
+              values:
+                - page_view
+                - content_download
+                - email_opened
+                - demo_booked
+                - opp_created
+                - closed_won
+                - closed_lost
+      - name: occurred_at
+        description: When the activity happened.
+        tests:
+          - not_null
+
+  - name: stg_accounts
+    description: Company dimension. One row per Lorefi customer account.
+    columns:
+      - name: account_id
+        description: Primary key.
+        tests:
+          - unique
+          - not_null
+      - name: account_name
+        description: Display name.
+        tests:
+          - not_null
+      - name: primary_domain
+        description: Primary web domain — coalesced from raw_accounts.primary_domain, falling back to the domain extracted from primary_email.
+        tests:
+          - not_null
+      - name: segment
+        description: Sales-driven segmentation.
+        tests:
+          - accepted_values:
+              values: ["smb", "mid", "enterprise"]
+      - name: tier
+        description: Internal account scoring tier.
+        tests:
+          - accepted_values:
+              values: ["a", "b", "c"]
+
+  # ---------------------------------------------------------------------------
+  # intermediate
+  # ---------------------------------------------------------------------------
+
+  - name: int_fact_leads_with_activities
+    description: stg_leads enriched with first-touch and last-touch activity aggregates.
+    columns:
+      - name: lead_id
+        description: Primary key. Same grain as stg_leads (one row per lead).
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('stg_leads')
+              field: lead_id
+      - name: first_activity_at
+        description: Earliest activity timestamp for the lead. NULL when the lead has no activities.
+      - name: first_activity_type
+        description: Type of the earliest activity.
+      - name: last_activity_at
+        description: Most recent activity timestamp for the lead.
+      - name: last_activity_type
+        description: Type of the most recent activity.
+      - name: total_activities
+        description: Total number of activity events for the lead.
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: ">= 0"
+
+  - name: int_fact_opps_by_line_items
+    description: Opportunities fanned out to line-item grain (one row per opp_id × product_line).
+    columns:
+      - name: opp_line_id
+        description: Synthetic primary key from dbt_utils.generate_surrogate_key(opp_id, product_line).
+        tests:
+          - unique
+          - not_null
+      - name: opp_id
+        description: FK to stg_opportunities.opp_id.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_opportunities')
+              field: opp_id
+      - name: lead_id
+        description: FK to stg_leads.lead_id.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_leads')
+              field: lead_id
+      - name: account_id
+        description: FK to stg_accounts.account_id.
+        tests:
+          - relationships:
+              to: ref('stg_accounts')
+              field: account_id
+      - name: product_line
+        description: Which of Lorefi's three products this line represents.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["Discover", "Studio", "Insights"]
+      - name: line_seats
+        description: Seats allocated to this product line on this opp.
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+      - name: price_per_seat
+        description: Per-seat list price for this product.
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: "> 0"
+      - name: net_bookings
+        description: line_seats × price_per_seat. List-level booked value for this line.
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: ">= 0"
+      - name: opp_total_net_bookings
+        description: SUM(net_bookings) OVER (PARTITION BY opp_id) — total list value across the opp.
+
+  # ---------------------------------------------------------------------------
+  # marts
+  # ---------------------------------------------------------------------------
+
+  - name: rpt_gtm_funnel_raw
+    description: Record-level GTM funnel. One row per lead with every stage timestamp and a derived `last_stage`.
+    columns:
+      - name: lead_id
+        description: Primary key.
+        tests:
+          - unique
+          - not_null
+          - relationships:
+              to: ref('stg_leads')
+              field: lead_id
+      - name: email
+        description: Lead email.
+        tests:
+          - not_null
+      - name: last_stage
+        description: Furthest funnel stage the lead reached.
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["known", "mql", "sql", "opp", "won", "lost"]
+      - name: is_won
+        description: True if the lead's opp closed won.
+        tests:
+          - not_null
+      - name: is_lost
+        description: True if the lead's opp closed lost.
+        tests:
+          - not_null
+      - name: mql_at
+        description: Earliest content_download or email_opened activity timestamp.
+      - name: sql_at
+        description: Earliest demo_booked activity timestamp.
+      - name: opp_created_at
+        description: Opportunity creation timestamp (from activity or opp table).
+      - name: closed_at
+        description: Close timestamp (from activity or opp.close_date).
+      - name: days_to_mql
+        description: created_at → mql_at in days. NULL until MQL.
+      - name: days_to_sql
+        description: created_at → sql_at in days. NULL until SQL.
+      - name: days_to_close
+        description: created_at → closed_at in days. NULL until closed.
+      - name: net_bookings
+        description: Sum of net_bookings across the lead's opportunities. NULL if no opp.
+
+    tests:
+      # Funnel timestamps must be monotonically non-decreasing along the stages.
+      # We only enforce it when both timestamps are populated; otherwise the
+      # check is vacuously true.
+      - dbt_utils.expression_is_true:
+          expression: "mql_at is null or sql_at is null or mql_at <= sql_at"
+      - dbt_utils.expression_is_true:
+          expression: "sql_at is null or opp_created_at is null or sql_at <= opp_created_at"
+      - dbt_utils.expression_is_true:
+          expression: "opp_created_at is null or closed_at is null or opp_created_at <= closed_at"
+      - dbt_utils.expression_is_true:
+          expression: "not (is_won and is_lost)"
+      - dbt_utils.expression_is_true:
+          expression: "net_bookings is null or net_bookings >= 0"
+
+  - name: rpt_gtm_funnel_monthly_agg
+    description: Monthly funnel tracker — one row per (month, source) with stage counts and conversion rates.
+    columns:
+      - name: month
+        description: Month bucket from DATE_TRUNC('month', leads.created_at).
+        tests:
+          - not_null
+      - name: source
+        description: Acquisition source.
+        tests:
+          - not_null
+      - name: mqls
+        description: Count of leads in the cohort that reached MQL.
+      - name: sqls
+        description: Count of leads in the cohort that reached SQL.
+      - name: opps
+        description: Count of leads in the cohort that reached the opportunity stage.
+      - name: won
+        description: Count of leads in the cohort that closed won.
+      - name: lost
+        description: Count of leads in the cohort that closed lost.
+      - name: mql_to_sql_rate
+        description: sqls / mqls. NULL when no MQLs in the cohort.
+      - name: sql_to_opp_rate
+        description: opps / sqls. NULL when no SQLs in the cohort.
+      - name: opp_to_won_rate
+        description: won / opps. NULL when no opps in the cohort.
+      - name: avg_days_to_close
+        description: Average days_to_close across closed (won + lost) leads.
+      - name: total_net_bookings
+        description: Sum of net_bookings across the cohort.
+
+    tests:
+      - dbt_utils.expression_is_true:
+          expression: "mql_to_sql_rate is null or (mql_to_sql_rate >= 0 and mql_to_sql_rate <= 1)"
+      - dbt_utils.expression_is_true:
+          expression: "sql_to_opp_rate is null or (sql_to_opp_rate >= 0 and sql_to_opp_rate <= 1)"
+      - dbt_utils.expression_is_true:
+          expression: "opp_to_won_rate is null or (opp_to_won_rate >= 0 and opp_to_won_rate <= 1)"
+      - dbt_utils.expression_is_true:
+          expression: "total_net_bookings >= 0"

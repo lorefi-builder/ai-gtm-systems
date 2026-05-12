@@ -1,0 +1,46 @@
+# =============================================================================
+# Example profiles.yml for the Lorefi GTM dbt project.
+#
+# Pick whichever profile fits your environment. Snowflake is the production
+# stack most teams recognize; DuckDB is the no-cloud local-dev option that
+# lets you actually run this repo end-to-end on a laptop in under a minute.
+#
+# Copy this file to ~/.dbt/profiles.yml (or DBT_PROFILES_DIR/profiles.yml)
+# and edit the credentials. The dbt_project.yml in this folder references
+# `profile: lorefi_gtm`, so the top-level key must stay as `lorefi_gtm`.
+# =============================================================================
+
+lorefi_gtm:
+  # Change this to "snowflake" when you're ready to point at the production
+  # warehouse. Default is duckdb so a fresh clone runs without any cloud setup.
+  target: duckdb
+
+  outputs:
+    # -------------------------------------------------------------------------
+    # DuckDB — local-dev, zero-infra path.
+    # Stores the entire warehouse in a single file at ./lorefi.duckdb. Wipe
+    # the file to reset; commit it to .gitignore.
+    # -------------------------------------------------------------------------
+    duckdb:
+      type: duckdb
+      path: "./lorefi.duckdb"
+      threads: 2
+      schema: main
+
+    # -------------------------------------------------------------------------
+    # Snowflake — production-shaped target.
+    # Replace each <PLACEHOLDER> with the value from your account.
+    # account format is usually "<org>-<account_locator>" (e.g. "abc12345-xy67890").
+    # -------------------------------------------------------------------------
+    snowflake:
+      type: snowflake
+      account: "<YOUR_SNOWFLAKE_ACCOUNT>"
+      user: "<YOUR_USERNAME>"
+      password: "<YOUR_PASSWORD>"            # or use `authenticator: externalbrowser`
+      role: "<YOUR_ROLE>"                    # e.g. TRANSFORMER
+      database: "<YOUR_DATABASE>"            # e.g. LOREFI_ANALYTICS
+      warehouse: "<YOUR_WAREHOUSE>"          # e.g. LOREFI_XS_WH
+      schema: "<YOUR_DEFAULT_SCHEMA>"        # e.g. DBT_DEV — your personal dev schema
+      threads: 4
+      client_session_keep_alive: false
+      query_tag: "lorefi_gtm"

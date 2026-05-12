@@ -1,0 +1,16 @@
+opp_id,lead_id,account_id,stage,amount,close_date,product_lines,seat_count,created_at
+opp_001,lead_001,acct_001,closed_won,48000.00,2026-02-19,Discover,12,2026-02-02 11:30:00
+opp_002,lead_004,acct_002,closed_won,96000.00,2026-02-28,"Discover,Studio",24,2026-02-10 10:00:00
+opp_003,lead_005,acct_003,proposal,72000.00,2026-04-15,Studio,16,2026-02-09 14:00:00
+opp_004,lead_006,acct_004,closed_lost,40000.00,2026-03-01,Discover,10,2026-02-05 11:00:00
+opp_005,lead_009,acct_005,proposal,54000.00,2026-04-30,Studio,12,2026-02-15 12:30:00
+opp_006,lead_011,acct_006,closed_won,36000.00,2026-03-05,Insights,12,2026-02-17 14:00:00
+opp_007,lead_015,acct_007,negotiation,120000.00,2026-05-15,"Discover,Studio,Insights",30,2026-02-20 09:00:00
+opp_008,lead_016,acct_008,closed_won,64000.00,2026-04-02,Discover,16,2026-03-01 10:00:00
+opp_009,lead_018,acct_009,qualification,80000.00,2026-05-30,"Discover,Insights",20,2026-03-08 11:00:00
+opp_010,lead_020,acct_010,closed_lost,32000.00,2026-04-10,Discover,8,2026-02-18 14:00:00
+opp_011,lead_024,acct_011,discovery,45000.00,2026-06-01,Studio,10,2026-03-15 13:00:00
+opp_012,lead_002,acct_012,discovery,22500.00,2026-06-15,Studio,5,2026-03-22 10:00:00
+opp_013,lead_008,acct_001,discovery,32000.00,2026-06-20,Discover,8,2026-03-25 09:00:00
+opp_014,lead_012,acct_011,proposal,27000.00,2026-05-20,Studio,6,2026-03-12 14:00:00
+opp_015,lead_025,acct_007,qualification,108000.00,2026-06-30,"Discover,Studio,Insights",27,2026-04-01 11:00:00

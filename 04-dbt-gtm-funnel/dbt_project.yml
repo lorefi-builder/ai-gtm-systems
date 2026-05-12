@@ -1,0 +1,103 @@
+# =============================================================================
+# Lorefi GTM funnel — dbt project config
+# -----------------------------------------------------------------------------
+# Analytics layer for the Lorefi GTM system (see ../01-postgres-gtm-schema/ for
+# the operational source-of-truth schema, ../02-claude-email-ops-agent/ for the
+# agent that proposes copy against it, and ../03-gtm-admin-ui/ for the human
+# review surface). In production this dbt project would consume the same
+# gtm.agent_outputs / gtm.activities / gtm.leads tables defined in folder 01.
+#
+# Two targets are supported via profiles.example.yml:
+#   - snowflake (production stack)
+#   - duckdb    (no-cloud local-dev path so the project actually runs)
+# =============================================================================
+
+name: "lorefi_gtm"
+profile: "lorefi_gtm"
+version: "1.0.0"
+config-version: 2
+
+require-dbt-version: ">=1.7.0"
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+snapshot-paths: ["snapshots"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+analysis-paths: ["analyses"]
+target-path: "target"
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+  - "logs"
+
+# -----------------------------------------------------------------------------
+# Model materializations
+# -----------------------------------------------------------------------------
+# staging: views — cheap, transparent, recomputed on every read.
+# intermediate: tables — joined / aggregated, worth materializing.
+# marts: tables — exec-grade reporting surface, queried often.
+# -----------------------------------------------------------------------------
+models:
+  lorefi_gtm:
+    staging:
+      +materialized: view
+      +schema: staging
+    intermediate:
+      +materialized: table
+      +schema: intermediate
+    marts:
+      +materialized: table
+      +schema: marts
+
+# -----------------------------------------------------------------------------
+# Snapshots — SCD2 history of opportunity state changes.
+# -----------------------------------------------------------------------------
+snapshots:
+  lorefi_gtm:
+    +target_schema: snapshots
+
+# -----------------------------------------------------------------------------
+# Seeds — land in the `raw` schema with explicit types so downstream casts are
+# deterministic across Snowflake and DuckDB.
+# -----------------------------------------------------------------------------
+seeds:
+  lorefi_gtm:
+    +schema: raw
+    +quote_columns: false
+    raw_leads:
+      +column_types:
+        lead_id: varchar
+        email: varchar
+        company: varchar
+        product_interest: varchar
+        source: varchar
+        source_campaign: varchar
+        owner_email: varchar
+        created_at: timestamp
+    raw_opportunities:
+      +column_types:
+        opp_id: varchar
+        lead_id: varchar
+        account_id: varchar
+        stage: varchar
+        amount: numeric(12, 2)
+        close_date: date
+        product_lines: varchar
+        seat_count: integer
+        created_at: timestamp
+    raw_activities:
+      +column_types:
+        activity_id: varchar
+        lead_id: varchar
+        activity_type: varchar
+        occurred_at: timestamp
+    raw_accounts:
+      +column_types:
+        account_id: varchar
+        account_name: varchar
+        primary_domain: varchar
+        primary_email: varchar
+        segment: varchar
+        tier: varchar

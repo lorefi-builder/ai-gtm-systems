@@ -1,0 +1,26 @@
+lead_id,email,company,product_interest,source,source_campaign,created_at,owner_email
+lead_001,alex.rosen@verge.media,Verge Media,discover,organic_search,seo:cross-media-search,2026-01-04 09:12:00,morgan@lorefi.com
+lead_002,priya.menon@atlaspublicradio.org,Atlas Public Radio,studio,content_marketing,guide:editorial-ops,2026-01-06 14:42:00,morgan@lorefi.com
+lead_003,toni.alvarez@northshorepress.com,Northshore Press,insights,webinar,wbnr:measure-pickup,2026-01-07 10:01:00,jules@lorefi.com
+lead_004,mira.chen@latticenewsroom.com,Lattice Newsroom,bundle,partner_referral,partner:onestream,2026-01-08 11:30:00,priya@lorefi.com
+lead_005,diego.park@foliostudios.tv,Folio Studios,studio,conference,conf:newsrewired-2026,2026-01-09 09:30:00,sam@lorefi.com
+lead_006,sasha.vance@riverlightmedia.com,Riverlight Media,discover,paid_search,gads:demo-now,2026-01-10 11:00:00,jules@lorefi.com
+lead_007,yusuf.patel@northwindbureau.com,Northwind Bureau,insights,content_marketing,guide:audience-discovery,2026-01-11 12:00:00,morgan@lorefi.com
+lead_008,hana.iverson@cresthilldaily.com,Cresthill Daily,discover,outbound,ob:strategic-accounts,2026-01-11 09:00:00,priya@lorefi.com
+lead_009,mateo.ruiz@baysidebroadcasting.com,Bayside Broadcasting,studio,webinar,wbnr:editorial-velocity,2026-01-12 12:00:00,sam@lorefi.com
+lead_010,kira.nakamura@ironpine.tv,Ironpine Network,bundle,newsletter,nl:cross-channel-january,2026-01-17 09:00:00,morgan@lorefi.com
+lead_011,olu.adeyemi@mapleandstone.media,Maple & Stone Media,insights,partner_referral,partner:newscan,2026-01-19 08:45:00,jules@lorefi.com
+lead_012,beatriz.costa@highlineaudio.fm,Highline Audio,studio,podcast_ad,pod:newsroom-craft,2026-01-20 10:00:00,priya@lorefi.com
+lead_013,henry.lin@quadrantpress.com,Quadrant Press,discover,organic_search,seo:newsroom-tools,2026-01-21 09:00:00,sam@lorefi.com
+lead_014,sienna.brooks@beaconhillmedia.com,Beacon Hill Media,insights,conference,conf:onlinemediaforum,2026-01-23 13:00:00,morgan@lorefi.com
+lead_015,rafael.ortega@tideline.studio,Tideline Studios,bundle,social_organic,linkedin:org,2026-01-24 11:00:00,jules@lorefi.com
+lead_016,aoife.sullivan@frontlinenewsroom.com,Frontline Newsroom,discover,content_marketing,post:measurement-failure,2026-01-25 10:00:00,priya@lorefi.com
+lead_017,eli.glass@northstarpub.com,Northstar Publishing,studio,outbound,ob:enterprise-q1,2026-01-25 15:00:00,sam@lorefi.com
+lead_018,quincy.watanabe@vellummedia.com,Vellum Media Group,bundle,paid_search,gads:lorefi-discover,2026-01-27 10:05:00,morgan@lorefi.com
+lead_019,noor.hassan@halftide.audio,Halftide Audio,insights,podcast_ad,pod:long-arc,2026-01-28 16:00:00,jules@lorefi.com
+lead_020,lior.cohen@longbridgepress.com,Long Bridge Press,discover,newsletter,nl:cross-channel-january,2026-01-29 14:00:00,priya@lorefi.com
+lead_021,reggie.ford@loomstatemedia.com,Loomstate Media,studio,webinar,wbnr:measure-pickup,2026-01-30 16:00:00,sam@lorefi.com
+lead_022,marta.klein@southforkdaily.com,Southfork Daily,discover,organic_search,seo:editorial-analytics,2026-01-31 17:00:00,morgan@lorefi.com
+lead_023,ines.aguilar@cypressquarterly.com,Cypress Quarterly,insights,content_marketing,guide:editorial-ops,2026-02-01 13:00:00,jules@lorefi.com
+lead_024,theo.whitman@glasshouse.studio,Glasshouse Studio,studio,partner_referral,partner:onestream,2026-02-02 16:00:00,priya@lorefi.com
+lead_025,vivian.park@anchorbaynews.com,Anchor Bay News,bundle,conference,conf:newsrewired-2026,2026-02-03 14:22:00,sam@lorefi.com

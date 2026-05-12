@@ -1,0 +1,6 @@
+# dbt_utils gives us surrogate_key + the generate_schema_name override pattern,
+# plus the expression_is_true test we use in models/schema.yml for business-rule
+# checks (e.g. net_bookings >= 0, mql_at <= sql_at).
+packages:
+  - package: dbt-labs/dbt_utils
+    version: [">=1.1.1", "<2.0.0"]

@@ -1,0 +1,96 @@
+version: 2
+
+# =============================================================================
+# raw_lorefi — source declarations
+# -----------------------------------------------------------------------------
+# In a real Lorefi install this source would point at a Fivetran-managed
+# replica of the gtm.* tables defined in ../01-postgres-gtm-schema/. Here the
+# `raw` schema is populated by dbt seeds so the whole project runs offline.
+# Freshness checks are defined on raw_activities because activity volume is
+# the canonical liveness signal — if no activities have landed in 24h we want
+# a warning; 72h is an outright error.
+# =============================================================================
+
+sources:
+  - name: raw_lorefi
+    description: >
+      Raw landing zone for the Lorefi GTM tables. In production this is the
+      Fivetran-replicated mirror of `gtm.leads`, `gtm.activities`,
+      `gtm.opportunities`, and `gtm.accounts`. In this demo it's populated
+      by the dbt seeds in `seeds/raw_*.csv`.
+    schema: raw
+
+    tables:
+      - name: raw_leads
+        description: One row per lead captured by the Lorefi marketing site or imported via outbound.
+        columns:
+          - name: lead_id
+            description: Primary key. Stable identifier assigned at lead capture.
+          - name: email
+            description: Lead's submitted email. Lowercased in stg_leads for case-insensitive joins.
+          - name: company
+            description: Self-reported company name. Free-form — not normalized against `raw_accounts`.
+          - name: product_interest
+            description: Which Lorefi product the lead indicated interest in — `discover`, `studio`, `insights`, or `bundle`.
+          - name: source
+            description: Acquisition channel (`organic_search`, `paid_search`, `webinar`, `outbound`, ...).
+          - name: source_campaign
+            description: Specific campaign string within the source channel.
+          - name: created_at
+            description: Timestamp of lead capture. Treated downstream as the canonical "known" funnel timestamp.
+          - name: owner_email
+            description: Internal Lorefi rep owning the lead.
+
+      - name: raw_opportunities
+        description: One row per sales opportunity. Links back to `raw_leads.lead_id` and `raw_accounts.account_id`.
+        columns:
+          - name: opp_id
+            description: Primary key.
+          - name: lead_id
+            description: FK to raw_leads.lead_id — the lead that converted into this opportunity.
+          - name: account_id
+            description: FK to raw_accounts.account_id.
+          - name: stage
+            description: Current stage in the sales pipeline — `discovery`, `qualification`, `proposal`, `negotiation`, `closed_won`, `closed_lost`.
+          - name: amount
+            description: Booked or proposed contract value in USD. Equals seat_count × per-seat list price for the product mix.
+          - name: close_date
+            description: Forecasted (open) or actual (closed) close date.
+          - name: product_lines
+            description: Comma-separated list of Lorefi products on the deal — combinations of `Discover`, `Studio`, `Insights`. The intermediate model splits this into one row per product.
+          - name: seat_count
+            description: Total seats across all product lines on the opp.
+          - name: created_at
+            description: When the opportunity record was created.
+
+      - name: raw_activities
+        description: Event stream of lead behaviors and pipeline transitions. The funnel marts derive every stage timestamp (mql_at, sql_at, opp_created_at, closed_at) from this table.
+        loaded_at_field: occurred_at
+        freshness:
+          warn_after: { count: 24, period: hour }
+          error_after: { count: 72, period: hour }
+        columns:
+          - name: activity_id
+            description: Primary key.
+          - name: lead_id
+            description: FK to raw_leads.lead_id.
+          - name: activity_type
+            description: One of `page_view`, `content_download`, `email_opened`, `demo_booked`, `opp_created`, `closed_won`, `closed_lost`.
+          - name: occurred_at
+            description: When the activity happened. Used as the freshness signal for this source.
+
+      - name: raw_accounts
+        description: Company-level dimension. One row per Lorefi customer account.
+        columns:
+          - name: account_id
+            description: Primary key.
+          - name: account_name
+            description: Display name for the account.
+          - name: primary_domain
+            description: Primary web domain for the account. May be NULL — stg_accounts falls back to extracting from `primary_email`.
+          - name: primary_email
+            description: Main contact email at the account.
+          - name: segment
+            description: Sales-driven segmentation — `smb`, `mid`, or `enterprise`.
+          - name: tier
+            description: Internal account scoring tier — `a` (strategic), `b` (named), `c` (long tail).

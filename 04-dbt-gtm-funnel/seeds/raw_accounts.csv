@@ -1,0 +1,13 @@
+account_id,account_name,primary_domain,primary_email,segment,tier
+acct_001,Verge Media,verge.media,hello@verge.media,mid,b
+acct_002,Lattice Newsroom,latticenewsroom.com,info@latticenewsroom.com,enterprise,a
+acct_003,Folio Studios,foliostudios.tv,contact@foliostudios.tv,mid,b
+acct_004,Riverlight Media,riverlightmedia.com,hello@riverlightmedia.com,smb,c
+acct_005,Bayside Broadcasting,baysidebroadcasting.com,info@baysidebroadcasting.com,mid,b
+acct_006,Maple & Stone Media,mapleandstone.media,hello@mapleandstone.media,smb,c
+acct_007,Tideline Studios,tideline.studio,hello@tideline.studio,enterprise,a
+acct_008,Frontline Newsroom,frontlinenewsroom.com,contact@frontlinenewsroom.com,mid,b
+acct_009,Vellum Media Group,vellummedia.com,info@vellummedia.com,enterprise,a
+acct_010,Long Bridge Press,longbridgepress.com,hello@longbridgepress.com,smb,c
+acct_011,Glasshouse Studio,,team@glasshouse.studio,mid,b
+acct_012,Atlas Public Radio,,hello@atlaspublicradio.org,mid,b
