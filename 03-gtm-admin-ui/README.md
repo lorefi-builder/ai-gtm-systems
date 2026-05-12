@@ -2,6 +2,13 @@
 
 **The human side of the loop.**
 
+The visual identity uses Activation Labs' phoenix-themed brand palette
+(Lunar New Year red, burgundy, orange, antique gold, warm cream) on a Fraunces /
+IBM Plex Sans / IBM Plex Mono type stack. The approval card was redesigned to
+read as a reviewer interface — typed proposal cards with source context, an
+A/B layout for paired email subject lines, and a qualified lift pill — rather
+than a JSON inspector.
+
 This is folder 03 — the UI where humans approve or reject what the agent in
 [folder 02](../02-claude-email-ops-agent/) proposed. Close the loop by reading
 this README and then running the dev server.

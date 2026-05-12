@@ -2,16 +2,40 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --al-ink: #1A0A0A;
+  --al-cream: #FBF6EE;
+  --al-cream-warm: #F5E9D7;
+  --al-cream-dim: #EDDFCA;
+  --al-red: #C8102E;
+  --al-red-deep: #7A1421;
+  --al-orange: #E85D2F;
+  --al-gold: #C9A227;
+  --al-gold-soft: #D9B872;
+  --al-ink-soft: #4A2424;
+  --al-ink-mute: #7A5454;
+  --al-sand: #F5E9D7;
+  --al-sand-soft: #C9B79A;
+  --al-sand-mute: #8B7456;
+  --al-stroke-red: rgba(200, 16, 46, 0.15);
+  --al-stroke-gold: rgba(201, 162, 39, 0.25);
+  --al-stroke-ink: rgba(26, 10, 10, 0.10);
+
+  --al-serif: var(--font-fraunces), "Times New Roman", Georgia, serif;
+  --al-sans: var(--font-inter), "IBM Plex Sans", system-ui, sans-serif;
+  --al-mono: var(--font-plex-mono), ui-monospace, monospace;
+}
+
 @layer base {
   html,
   body {
-    background-color: #0a2a2e;
-    color: #e0d3c8;
-    color-scheme: dark;
+    background-color: var(--al-cream);
+    color: var(--al-ink);
+    color-scheme: light;
   }
 
   body {
-    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+    font-family: var(--al-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -19,12 +43,12 @@
   h1,
   h2,
   h3 {
-    font-family: var(--font-serif), ui-serif, Georgia, serif;
-    letter-spacing: -0.005em;
+    font-family: var(--al-serif);
+    letter-spacing: -0.01em;
   }
 
   ::selection {
-    background: rgba(255, 141, 110, 0.35);
-    color: #0a2a2e;
+    background: rgba(200, 16, 46, 0.20);
+    color: var(--al-ink);
   }
 }

@@ -2,17 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { createServiceClient } from "@/lib/supabase";
+import { AlreadyActionedError } from "./errors";
 
 const REVIEWER_EMAIL = "demo-reviewer@activationlabs.io";
-
-export class AlreadyActionedError extends Error {
-  constructor(id: string) {
-    super(
-      `Row ${id} is no longer in pending_review — another reviewer beat us to it.`,
-    );
-    this.name = "AlreadyActionedError";
-  }
-}
 
 /**
  * Flip a pending agent_output row to status='approved'.

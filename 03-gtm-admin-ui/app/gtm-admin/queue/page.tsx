@@ -1,6 +1,6 @@
 import { ApprovalCard } from "./approval-card";
 import {
-  createAnonClient,
+  createServiceClient,
   type AgentName,
   type AgentOutputRow,
 } from "@/lib/supabase";
@@ -13,7 +13,7 @@ const SECTIONS: Array<{ agent: AgentName; title: string }> = [
 ];
 
 async function fetchPending(): Promise<AgentOutputRow[]> {
-  const supabase = createAnonClient();
+  const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("agent_outputs")
     .select(
@@ -40,43 +40,53 @@ export default async function QueuePage() {
   }
 
   return (
-    <div className="space-y-12">
-      <header className="space-y-3">
-        <h1 className="font-serif text-4xl text-sand sm:text-5xl">
+    <div className="mx-auto max-w-6xl px-6 py-12 sm:px-10">
+      <header>
+        <h1 className="font-serif text-6xl font-semibold tracking-tight text-[var(--al-ink)]">
           Pending review
         </h1>
-        <p className="max-w-2xl text-sand-muted">
+        <p className="mt-4 max-w-2xl text-base leading-relaxed text-[var(--al-ink-soft)]">
           Proposals from the email-ops and content-ops agents. Nothing here
           reaches a customer until you approve it. Rejections require a note
           back to the agent loop.
         </p>
       </header>
 
-      {SECTIONS.map(({ agent, title }) => {
-        const items = grouped[agent];
-        return (
-          <section key={agent} className="space-y-5">
-            <div className="flex items-baseline gap-3 border-b border-sand/10 pb-2">
-              <h2 className="font-serif text-2xl text-sand">{title}</h2>
-              <span className="font-mono text-xs uppercase tracking-[0.18em] text-sand-muted">
-                [{items.length.toString().padStart(2, "0")}]
-              </span>
-            </div>
+      <div className="mt-12 space-y-16">
+        {SECTIONS.map(({ agent, title }) => {
+          const items = grouped[agent];
+          return (
+            <section key={agent}>
+              <div className="flex items-baseline gap-3">
+                <h2 className="font-serif text-[32px] italic leading-tight text-[var(--al-ink)]">
+                  {title}
+                </h2>
+                <span className="inline-flex items-center rounded-full bg-[var(--al-red)] px-2.5 py-0.5 font-mono text-[12px] leading-none text-[var(--al-cream)]">
+                  {items.length.toString().padStart(2, "0")}
+                </span>
+              </div>
+              <div
+                className="mt-3 h-px w-full"
+                style={{ backgroundColor: "var(--al-stroke-ink)" }}
+              />
 
-            {items.length === 0 ? (
-              <p className="italic text-sand-muted">No pending proposals.</p>
-            ) : (
-              <ul className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                {items.map((row) => (
-                  <li key={row.id}>
-                    <ApprovalCard row={row} />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        );
-      })}
+              {items.length === 0 ? (
+                <p className="mt-6 font-serif italic text-[var(--al-ink-mute)]">
+                  No pending proposals.
+                </p>
+              ) : (
+                <ul className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
+                  {items.map((row) => (
+                    <li key={row.id}>
+                      <ApprovalCard row={row} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          );
+        })}
+      </div>
     </div>
   );
 }
