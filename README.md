@@ -31,4 +31,4 @@ Kitwanie Carbon, operator, tinkerer, product builder.
 Six years scaling GTM analytics at Tebra, Grafana Labs, Miro, and
 HashiCorp.
 
-[LinkedIn](https://linkedin.com/in/kitwaniecarbon)
+[LinkedIn](https://www.linkedin.com/in/kitwanie-carbon/)
