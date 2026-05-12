@@ -11,10 +11,10 @@ the repo reads as one coherent system, not four loose demos.
 
 | Folder | What it shows | Stack |
 |---|---|---|
-| [`01-postgres-gtm-schema/`](./01-postgres-gtm-schema) | Production GTM data model — funnel state, experiments, an agent-output queue with human approval, RLS for multi-tenant safety. | PostgreSQL |
-| [`02-claude-email-ops-agent/`](./02-claude-email-ops-agent) | A scheduled Claude agent that proposes email subject-line variants, writes drafts into the Postgres queue, never ships autonomously. | TypeScript, Claude API |
-| [`03-gtm-admin-ui/`](./03-gtm-admin-ui) | Next.js admin surface at `/gtm-admin/queue` where humans approve/reject agent outputs. The other half of the loop. | TypeScript, Next.js |
-| [`04-dbt-gtm-funnel/`](./04-dbt-gtm-funnel) | End-to-end dbt project — staging → intermediate → marts → snapshots — for a B2B SaaS GTM funnel with SCD2 historical tracking. | dbt, SQL |
+| [`01-postgres-gtm-schema/`](./01-postgres-gtm-schema) | Production GTM data model — leads, activities, experiments, agent-output queue. Defense-in-depth status enforcement (CHECK + transition trigger + RLS), audit log via trigger, idempotent funnel advancement for out-of-order events. | PostgreSQL |
+| [`02-claude-email-ops-agent/`](./02-claude-email-ops-agent) | Non-autonomous TypeScript Claude agent. Watches for underperforming subject-line A/B tests via a 3-CTE open-rate query, proposes two new candidates per losing variant, writes them to the queue as `pending_review`. Never ships its own output — the database role denies it. | TypeScript, Claude API |
+| [`03-gtm-admin-ui/`](./03-gtm-admin-ui) | Next.js 15 admin surface at `/gtm-admin/queue` where humans approve or reject agent outputs. Server actions with row-level race-condition guards, optimistic UI with snap-back on failure, typed errors surfaced as toasts. | TypeScript, Next.js |
+| [`04-dbt-gtm-funnel/`](./04-dbt-gtm-funnel) | End-to-end dbt project — staging → intermediate → marts → snapshots — for a B2B SaaS GTM funnel. Cross-warehouse portable (Snowflake + DuckDB), 40+ tests as contracts, SCD2 historical tracking. | dbt, SQL |
 
 ## The pattern
 
