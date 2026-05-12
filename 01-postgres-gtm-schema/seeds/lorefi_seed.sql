@@ -432,3 +432,85 @@ COMMIT;
 -- SELECT funnel_state, count(*) FROM gtm.leads GROUP BY 1 ORDER BY 1;
 -- SELECT status, count(*) FROM gtm.agent_outputs GROUP BY 1 ORDER BY 1;
 -- SELECT count(*) AS audit_rows FROM gtm.agent_output_audit;
+
+
+-- ---------------------------------------------------------------------------
+-- Q2 open_rate experiment: subject_line_lift_q2
+--
+-- Demonstrates the original `open_rate` path of the email-ops agent
+-- (separate from the generalized signal_rate / multi-metric flow). Twelve
+-- existing leads are exposed 6/6 across a control and an outcome_named
+-- variant; email_opened activities are inserted so that:
+--   - control       has 3 of 6 opens => 0.500 open rate (winner)
+--   - outcome_named has 1 of 6 opens => 0.167 open rate (loser; the agent
+--                                                        proposes replacements
+--                                                        for this variant)
+--
+-- The agent's CTE in queue.ts filters `is_control = false`, so it targets
+-- the non-control variant. Run the agent with OPEN_RATE_THRESHOLD=0.18 (or
+-- 0.20) and MIN_SAMPLE_SIZE<=6 to see it fire on outcome_named.
+-- ---------------------------------------------------------------------------
+
+BEGIN;
+
+-- Experiment
+INSERT INTO gtm.experiments (name, hypothesis, primary_metric, status, started_at, ended_at) VALUES
+  ('subject_line_lift_q2',
+   'Specific outcome-named subject lines outperform generic "quick question" patterns for cold open rates.',
+   'open_rate',
+   'active',
+   '2026-03-15 00:00:00+00',
+   NULL);
+
+-- Variants
+INSERT INTO gtm.experiment_variants
+  (experiment_id, variant_name, traffic_pct, is_control, subject_line, body_template)
+SELECT e.id, v.variant_name, v.traffic_pct, v.is_control, v.subject_line, v.body_template
+FROM gtm.experiments e
+JOIN (VALUES
+  ('control',       50.0, true,  'Quick note from Lorefi',                          NULL),
+  ('outcome_named', 50.0, false, 'Surface every story your newsroom is missing',    NULL)
+) AS v(variant_name, traffic_pct, is_control, subject_line, body_template)
+  ON e.name = 'subject_line_lift_q2';
+
+-- Exposures: 12 oldest leads, 6 to each variant. exposed_at spread across
+-- 2026-03-15 .. 2026-03-25 (one exposure every two days within each variant).
+WITH selected_leads AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY created_at) AS rn
+  FROM gtm.leads
+  ORDER BY created_at
+  LIMIT 12
+)
+INSERT INTO gtm.experiment_exposures (variant_id, lead_id, exposed_at)
+SELECT
+  v.id,
+  sl.id,
+  ('2026-03-15 00:00:00+00'::timestamptz + (((sl.rn - 1) % 6) * INTERVAL '2 days'))
+FROM selected_leads sl
+JOIN gtm.experiment_variants v
+  ON v.experiment_id = (SELECT id FROM gtm.experiments WHERE name = 'subject_line_lift_q2')
+WHERE
+     (sl.rn <= 6 AND v.variant_name = 'control')
+  OR (sl.rn >  6 AND v.variant_name = 'outcome_named');
+
+-- email_opened activities. occurred_at is >= the matching exposed_at so the
+-- temporal join in fetchUnderperformingExperiments counts them.
+--   control:       3 openers (rn=1, rn=2, rn=3)  -> 3/6 = 0.500 (winner)
+--   outcome_named: 1 opener  (rn=7)              -> 1/6 = 0.167 (loser)
+WITH selected_leads AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY created_at) AS rn
+  FROM gtm.leads
+  ORDER BY created_at
+  LIMIT 12
+)
+INSERT INTO gtm.activities (lead_id, activity_type, occurred_at, payload)
+SELECT sl.id, 'email_opened', op.occurred_at, op.payload
+FROM selected_leads sl
+JOIN (VALUES
+  (1, '2026-03-16 10:00:00+00'::timestamptz, '{"variant": "control"}'::jsonb),
+  (2, '2026-03-18 10:30:00+00'::timestamptz, '{"variant": "control"}'::jsonb),
+  (3, '2026-03-20 11:00:00+00'::timestamptz, '{"variant": "control"}'::jsonb),
+  (7, '2026-03-16 11:00:00+00'::timestamptz, '{"variant": "outcome_named"}'::jsonb)
+) AS op(rn, occurred_at, payload) ON op.rn = sl.rn;
+
+COMMIT;
