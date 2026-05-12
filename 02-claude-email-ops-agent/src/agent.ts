@@ -6,7 +6,7 @@ import { AgentOutput, type AgentOutput as AgentOutputT } from './schema.js';
 
 // Model pin. Verify against the latest Anthropic API docs before bumping:
 // https://docs.claude.com/en/docs/about-claude/models
-const MODEL_ID = 'claude-sonnet-4-6-20251015';
+const MODEL_ID = 'claude-sonnet-4-6';
 
 const MAX_TOKENS = 1500;
 const TEMPERATURE = 0.7;
@@ -17,8 +17,9 @@ const PROMPTS_DIR = resolve(__dirname, '..', 'prompts');
 export interface ProposalContext {
   experiment_name: string;
   current_subject: string;
-  current_open_rate: number;
+  current_signal_rate: number;
   sample_size: number;
+  primary_metric: string;
   recent_winners?: string[];
 }
 
@@ -74,8 +75,9 @@ export async function generateSubjectLineProposals(
   const userMessage = renderTemplate(userTemplate, {
     experiment_name: context.experiment_name,
     current_subject: context.current_subject,
-    current_open_rate_pct: `${(context.current_open_rate * 100).toFixed(2)}%`,
+    current_signal_rate_pct: `${(context.current_signal_rate * 100).toFixed(2)}%`,
     sample_size: context.sample_size.toString(),
+    primary_metric: context.primary_metric,
     recent_winners: formatRecentWinners(context.recent_winners),
   });
 

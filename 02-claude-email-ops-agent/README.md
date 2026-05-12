@@ -10,6 +10,13 @@ literally cannot ship its own work, both because it never tries to and
 because the database role it authenticates as (`gtm_agent`) is denied that
 privilege by RLS.
 
+The agent supports three `primary_metric` types — **`open_rate`**,
+**`reply_rate`**, and **`demo_request_rate`** — and calibrates its proposal
+angles per metric (see `prompts/system.md`). Internally these are unified
+under **signal rate**, the generalized name for "fraction of exposures that
+produced a positive activity" for the experiment's primary metric. The
+single `OPEN_RATE_THRESHOLD` env var gates all three.
+
 ## The headline: human-in-the-loop, by design
 
 Nothing this agent emits reaches a customer without a person on the

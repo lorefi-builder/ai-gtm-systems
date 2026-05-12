@@ -4,8 +4,9 @@ Propose two new subject-line variants for the following underperforming experime
 
 - **Name:** {{experiment_name}}
 - **Current subject (losing variant):** {{current_subject}}
-- **Observed open rate:** {{current_open_rate_pct}}
+- **Observed signal rate:** {{current_signal_rate_pct}}
 - **Sample size:** {{sample_size}} exposures
+- **Primary metric:** {{primary_metric}}
 
 ## Recent winning subject lines (for style anchoring)
 

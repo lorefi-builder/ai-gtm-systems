@@ -24,8 +24,9 @@ export const UnderperformingExperiment = z.object({
   experiment_id: z.string().uuid(),
   variant_id: z.string().uuid(),
   name: z.string(),
+  primary_metric: z.string(),
   current_subject: z.string(),
-  current_open_rate: z.number().min(0).max(1),
+  current_signal_rate: z.number().min(0).max(1),
   sample_size: z.number().int().nonnegative(),
 });
 export type UnderperformingExperiment = z.infer<typeof UnderperformingExperiment>;

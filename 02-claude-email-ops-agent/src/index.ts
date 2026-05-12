@@ -9,7 +9,7 @@ async function main(): Promise<void> {
 
   console.log(
     `[email-ops] starting agent_name=${config.AGENT_NAME} dry_run=${config.DRY_RUN} ` +
-      `min_sample_size=${config.MIN_SAMPLE_SIZE} open_rate_threshold=${config.OPEN_RATE_THRESHOLD}`,
+      `min_sample_size=${config.MIN_SAMPLE_SIZE} signal_rate_threshold=${config.OPEN_RATE_THRESHOLD}`,
   );
 
   const pool = createPool({ connectionString: config.DATABASE_URL });
@@ -74,9 +74,10 @@ async function processExperiment(
   config: ReturnType<typeof loadConfig>,
   experiment: UnderperformingExperiment,
 ): Promise<void> {
-  const ratePct = (experiment.current_open_rate * 100).toFixed(2);
+  const ratePct = (experiment.current_signal_rate * 100).toFixed(2);
   console.log(
-    `[email-ops] experiment="${experiment.name}" current_open_rate=${ratePct}% n=${experiment.sample_size}`,
+    `[email-ops] experiment="${experiment.name}" primary_metric=${experiment.primary_metric} ` +
+      `current_signal_rate=${ratePct}% n=${experiment.sample_size}`,
   );
 
   const proposals = await generateSubjectLineProposals(
@@ -84,15 +85,17 @@ async function processExperiment(
     {
       experiment_name: experiment.name,
       current_subject: experiment.current_subject,
-      current_open_rate: experiment.current_open_rate,
+      current_signal_rate: experiment.current_signal_rate,
       sample_size: experiment.sample_size,
+      primary_metric: experiment.primary_metric,
     },
   );
 
   const payload = {
     source_variant_id: experiment.variant_id,
     source_subject: experiment.current_subject,
-    source_open_rate: experiment.current_open_rate,
+    source_primary_metric: experiment.primary_metric,
+    source_signal_rate: experiment.current_signal_rate,
     source_sample_size: experiment.sample_size,
     proposals: proposals.proposals,
   };
