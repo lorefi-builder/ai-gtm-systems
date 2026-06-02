@@ -152,6 +152,15 @@ h1, h2, h3, h4 { font-family: var(--display); letter-spacing: -0.015em; margin: 
 }
 .sl-btn:hover { background: var(--cream-warm); }
 .sl-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* In-flight busy state for server-calling buttons (set by runBusy in app.js). */
+.is-busy { cursor: progress; opacity: 0.85; }
+.spinner {
+  display: inline-block; width: 12px; height: 12px; margin-right: 7px;
+  border: 2px solid currentColor; border-right-color: transparent;
+  border-radius: 50%; vertical-align: -1px; animation: spin 0.6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .sl-btn-primary { background: var(--slack-green); border-color: var(--slack-green); color: #fff; }
 .sl-btn-primary:hover { background: var(--slack-green-d); }
 .sl-btn-danger { background: var(--slack-red); border-color: var(--slack-red); color: #fff; }

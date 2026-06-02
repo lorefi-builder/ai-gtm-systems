@@ -23,7 +23,16 @@ Return a SINGLE JSON object with EXACTLY these keys:
 - "escalation_flags": array of strings — include ONLY the LLM-judged flags that
   clearly apply, each exactly one of:
     "nonstandard_platform"  (on-prem / air-gapped / bespoke tooling / unusual delivery)
-    "extreme_complexity"    (taxonomy depth or expertise bar far above baseline)
+    "extreme_complexity"    (the work requires capability or methodology the
+                            company has NO demonstrated track record in: genuinely
+                            novel task design, unproven modality combinations, or
+                            research-grade ambiguity where even the success
+                            criteria are undefined. Do NOT raise this for high
+                            volume, high dollar value, aggressive timelines, or a
+                            need for credentialed domain experts — e.g. CFA-level
+                            finance expertise is STANDARD for a finance engagement,
+                            not extreme. A large, expensive, expert-heavy project
+                            in a domain the company already serves is NOT extreme.)
     "new_modality_av"       (audio or video data outside standard pipelines)
   Do NOT include PII or non-English flags here — those are detected separately.
 

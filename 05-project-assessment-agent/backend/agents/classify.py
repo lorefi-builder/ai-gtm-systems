@@ -11,10 +11,13 @@ Three visibly separate layers:
                         * LLM-judged: nonstandard platform, extreme complexity,
                           new audio/video modality
 
-Plus a graceful confidence/escalation HOOK: low confidence, unresolved
-domain/task_type, or a multi-project transcript sets needs_human_review with a
-reason. It never crashes — it produces the rest of the assessment and surfaces
-the flag (full edge-case handling is a later block).
+Plus a review HOOK that sets needs_human_review with a grouped reason:
+  POLICY ESCALATION — yellow/red capability color, or any escalation flag.
+  AGENT UNCERTAINTY — unresolved domain/task_type, low confidence, or a
+                      multi-project transcript.
+It never crashes — it produces the rest of the assessment and surfaces the flag.
+v1 stays human-in-the-loop: this only flags + explains; lifecycle/transition
+guards and the approve/reject routes are unchanged.
 """
 
 from __future__ import annotations
@@ -157,14 +160,34 @@ def classify(extraction: Extraction, transcript_text: str) -> Classification:
             if flag in valid_rule_ids and flag not in flags:
                 flags.append(flag)
 
-    # 4) HOOK: graceful confidence / escalation review trigger.
-    reasons: List[str] = []
+    # 4) HOOK: review triggers, grouped into two buckets so review_reason tells WHY.
+    #    (a) POLICY ESCALATION — capability color (yellow/red) + any escalation flag.
+    #    (b) AGENT UNCERTAINTY — unresolved / low-confidence / multi-project.
+    # v1 stays human-in-the-loop: this ONLY sets the review flag + reason. It does
+    # not touch lifecycle/transition guards or the approve/reject routes.
+    policy_reasons: List[str] = []
+    if color == "yellow":
+        policy_reasons.append("Yellow capability — internal review required")
+    if color == "red":
+        policy_reasons.append("Red capability — executive approval required")
+    if flags:
+        policy_reasons.append("escalation flags: " + ", ".join(flags))
+
+    uncertainty_reasons: List[str] = []
     if unresolved:
-        reasons.append("could not confidently resolve domain/task_type")
+        uncertainty_reasons.append("could not confidently resolve domain/task_type")
     if confidence < CONFIDENCE_THRESHOLD:
-        reasons.append(f"confidence {confidence:.2f} below threshold {CONFIDENCE_THRESHOLD}")
+        uncertainty_reasons.append(
+            f"confidence {confidence:.2f} below threshold {CONFIDENCE_THRESHOLD}"
+        )
     if extraction.multi_project:
-        reasons.append("multiple distinct projects discussed in one transcript")
+        uncertainty_reasons.append("multiple distinct projects discussed in one transcript")
+
+    grouped: List[str] = []
+    if policy_reasons:
+        grouped.append("POLICY ESCALATION: " + "; ".join(policy_reasons))
+    if uncertainty_reasons:
+        grouped.append("AGENT UNCERTAINTY: " + "; ".join(uncertainty_reasons))
 
     return Classification(
         domain=domain,
@@ -173,8 +196,8 @@ def classify(extraction: Extraction, transcript_text: str) -> Classification:
         confidence=confidence,
         reasoning=reasoning,
         escalation_flags=flags,
-        needs_human_review=bool(reasons),
-        review_reason="; ".join(reasons) if reasons else None,
+        needs_human_review=bool(grouped),
+        review_reason=" | ".join(grouped) if grouped else None,
     )
 
 

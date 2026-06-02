@@ -95,6 +95,36 @@ function showError(msg) {
   el("err-banner").classList.add("show");
 }
 
+// Wrap any server-calling action so a click visibly registers and a second click
+// can't fire a duplicate request. The re-entrancy guard runs SYNCHRONOUSLY — in
+// the same tick as the click, before any await — which is the actual double-fire
+// fix; the spinner is only the visual. Restores in `finally`, guarding against
+// the button having been re-rendered/removed by the action.
+async function runBusy(buttonEl, asyncFn, busyLabel = "Running…") {
+  // 1) Re-entrancy guard FIRST, synchronously, before any await.
+  if (!buttonEl || buttonEl.disabled || buttonEl.dataset.busy === "1") return;
+  buttonEl.dataset.busy = "1";
+  buttonEl.disabled = true;
+  const originalHtml = buttonEl.innerHTML;
+  buttonEl.classList.add("is-busy");
+  buttonEl.innerHTML = `<span class="spinner" aria-hidden="true"></span>${escapeHtml(busyLabel)}`;
+  try {
+    await asyncFn();
+  } catch (e) {
+    // Surface minimally, don't swallow (covers a 529 too — retry isn't in yet).
+    showError(e && e.message ? e.message : String(e));
+  } finally {
+    // Only restore if the button is still in the DOM — many of these actions
+    // re-render or remove their bubble, in which case there's nothing to restore.
+    if (buttonEl.isConnected) {
+      buttonEl.disabled = false;
+      buttonEl.dataset.busy = "0";
+      buttonEl.classList.remove("is-busy");
+      buttonEl.innerHTML = originalHtml;
+    }
+  }
+}
+
 // ---------------------------------------------------------------- Slack bubble renderer
 // Renders one slack_message payload (channel header omitted — the pane is the
 // channel). opts: { badge, below, footer, hideButtons, disableButtons }.
@@ -235,7 +265,7 @@ async function runSpec() {
   const t = window.TRANSCRIPTS[sel.value];
   if (!t) return;
 
-  el("run-spec").disabled = true;
+  // The #run-spec button's busy/disabled state is owned by runBusy (see init).
   const loader = { id: nextId(), kind: "loading", text: "Agent 1 extracting signals" };
   state.spec.push(loader);
   renderSpec();
@@ -265,8 +295,6 @@ async function runSpec() {
     state.spec = state.spec.filter((m) => m.id !== loader.id);
     state.spec.push({ id: nextId(), kind: "error", text: e.message });
     renderSpec();
-  } finally {
-    el("run-spec").disabled = false;
   }
 }
 
@@ -473,21 +501,26 @@ function onChannelClick(e) {
   let val = {};
   try { val = JSON.parse(btn.dataset.value || "{}"); } catch (_) {}
 
-  if (action === "send_to_review") sendToReview(val.spec_id);
-  else if (action === "approve_spec") approveSpec(val.spec_id);
-  else if (action === "reject_spec") openReject(val.spec_id);
-  else if (action === "submit_reject") submitReject(val.spec_id, val.item);
-  else if (action === "cancel_reject") cancelReject(val.item);
-  else if (action === "dedup_proceed") resumeSpec(val.ref, "proceed");
-  else if (action === "dedup_link") resumeSpec(val.ref, "link");
-  else if (action === "dedup_escalate") resumeSpec(val.ref, "escalate");
-  // Block 5B actions:
-  else if (action === "delete_spec") openDelete(val.mid);
-  else if (action === "confirm_delete") confirmDelete(val.spec_id, val.mid);
-  else if (action === "cancel_delete") cancelDelete(val.mid);
-  else if (action === "regenerate_open") openRegen(val.item);
-  else if (action === "regenerate_cancel") cancelRegen(val.item);
-  else if (action === "regenerate_submit") submitRegen(val.spec_id, val.item);
+  // Server-calling actions route through runBusy (synchronous re-entrancy guard
+  // + disable + spinner + restore). Local-only toggles call their handler direct.
+  switch (action) {
+    // --- server calls (busy-wrapped; `btn` is the clicked element) ---
+    case "send_to_review":    return runBusy(btn, () => sendToReview(val.spec_id), "Sending…");
+    case "approve_spec":      return runBusy(btn, () => approveSpec(val.spec_id), "Approving…");
+    case "submit_reject":     return runBusy(btn, () => submitReject(val.spec_id, val.item), "Rejecting…");
+    case "dedup_proceed":     return runBusy(btn, () => resumeSpec(val.ref, "proceed"), "Working…");
+    case "dedup_link":        return runBusy(btn, () => resumeSpec(val.ref, "link"), "Working…");
+    case "dedup_escalate":    return runBusy(btn, () => resumeSpec(val.ref, "escalate"), "Working…");
+    case "regenerate_submit": return runBusy(btn, () => submitRegen(val.spec_id, val.item), "Regenerating…");
+    case "confirm_delete":    return runBusy(btn, () => confirmDelete(val.spec_id, val.mid), "Deleting…");
+    // --- local-only toggles (no server call; must NOT be busy-wrapped) ---
+    case "reject_spec":       return openReject(val.spec_id);
+    case "cancel_reject":     return cancelReject(val.item);
+    case "delete_spec":       return openDelete(val.mid);
+    case "cancel_delete":     return cancelDelete(val.mid);
+    case "regenerate_open":   return openRegen(val.item);
+    case "regenerate_cancel": return cancelRegen(val.item);
+  }
 }
 
 function openReject(specId) {
@@ -885,7 +918,7 @@ function initComposer() {
   };
   sel.addEventListener("change", updatePreview);
   updatePreview();
-  el("run-spec").addEventListener("click", runSpec);
+  el("run-spec").addEventListener("click", (e) => runBusy(e.currentTarget, runSpec, "Running /spec…"));
 }
 
 function init() {
