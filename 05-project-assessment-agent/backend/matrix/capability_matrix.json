@@ -1,0 +1,56 @@
+{
+  "_about": "Lorefi capability/risk matrix. color drives the go/no-go call per (domain, task_type). green = standard delivery / go, yellow = deliverable but scope + caveats required, red = escalate / likely no-go. escalation_rules always fire regardless of color.",
+  "task_type_order": [
+    "Data Labeling",
+    "Model Eval",
+    "Content Gen",
+    "Conversational AI",
+    "Doc Process",
+    "Code Review"
+  ],
+  "matrix": {
+    "Technology": ["green", "green", "green", "yellow", "yellow", "green"],
+    "Financial Services": ["green", "yellow", "yellow", "red", "yellow", "green"],
+    "Healthcare": ["yellow", "yellow", "red", "red", "yellow", "red"],
+    "Legal": ["yellow", "red", "yellow", "red", "green", "red"],
+    "Retail": ["green", "green", "green", "green", "yellow", "yellow"],
+    "Government": ["red", "red", "red", "red", "red", "red"]
+  },
+  "color_notes": {
+    "green": "Standard delivery. Known playbook, staffable from the bench.",
+    "yellow": "Deliverable with scoping: extra QA, SME review, or compliance caveats. Tighten acceptance criteria.",
+    "red": "Escalate to leadership. Regulatory, safety, or capability risk; default to no-go pending review."
+  },
+  "escalation_rules": [
+    {
+      "rule_id": "pii_regulated",
+      "label": "PII / regulated data",
+      "detection": "deterministic",
+      "note": "Transcript signals PII, PHI, PCI, or otherwise regulated data. Always escalate for compliance review even on a green cell."
+    },
+    {
+      "rule_id": "non_english",
+      "label": "Non-English data",
+      "detection": "deterministic",
+      "note": "Source data is non-English or multilingual. Requires language-qualified contributors and QA; escalate for staffing."
+    },
+    {
+      "rule_id": "nonstandard_platform",
+      "label": "Non-standard platform / delivery",
+      "detection": "llm",
+      "note": "Customer requires delivery on a non-standard platform, on-prem, air-gapped, or bespoke tooling. Escalate for solutioning."
+    },
+    {
+      "rule_id": "extreme_complexity",
+      "label": "Extreme complexity",
+      "detection": "llm",
+      "note": "Task complexity, taxonomy depth, or expertise bar is far above baseline. Escalate for feasibility and pricing."
+    },
+    {
+      "rule_id": "new_modality_av",
+      "label": "New modality – audio/video",
+      "detection": "llm",
+      "note": "Audio or video modality outside current standard pipelines. Escalate for capability and tooling assessment."
+    }
+  ]
+}
