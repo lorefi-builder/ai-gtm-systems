@@ -6,11 +6,19 @@ for, as a plain string. Block 3 will actually post it; here we just return text.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
-from agents.schemas import Classification, DedupResult, Extraction, ResourceEstimate
+from agents.schemas import (
+    Classification,
+    DedupResult,
+    EdgeCaseFlag,
+    Extraction,
+    ResourceEstimate,
+)
 
 _COLOR_EMOJI = {"green": "🟢", "yellow": "🟡", "red": "🔴"}
+# Per-tier emoji for the advisory edge-case block (1 most structural → 3 least).
+_EDGE_EMOJI = {1: "📑", 2: "❓", 3: "📭"}
 
 
 def _scope_oneliner(scope: Dict[str, Any]) -> str:
@@ -33,6 +41,7 @@ def format_summary(
     estimate: ResourceEstimate,
     dedup: DedupResult,
     spec_id: str,
+    edge_cases: Optional[List[EdgeCaseFlag]] = None,
 ) -> str:
     """Return the Slack-style assessment summary as a plain string."""
     color = classification.color
@@ -73,11 +82,31 @@ def format_summary(
         risks.append(f"♻️ Possible duplicate — {dedup.reason}")
     if estimate.verified.net_new:
         risks.append("🆕 Net-new account (stub created in dim_account)")
+    else:
+        # Returning account: surface the Salesforce/warehouse enrichment (prior
+        # specs, approvals, and the most recent rejection reason if any).
+        v = estimate.verified
+        line = (
+            f"🔁 Returning account — {v.prior_spec_count} prior specs "
+            f"({v.prior_approved_count} approved)"
+        )
+        if v.prior_rejection_reasons:
+            line += f", last rejected for: {v.prior_rejection_reasons[-1]}"
+        risks.append(line)
     if risks:
         lines.append("• *Risks / review:*")
         lines.extend(f"    {r}" for r in risks)
     else:
         lines.append("• *Risks / review:* none flagged")
+
+    # • Edge cases (advisory) — deliberately visually distinct from the policy
+    # "Escalation flags" and "Needs human review" lines above. These never change
+    # the verdict; they're reviewer nudges, rendered tier-ascending.
+    if edge_cases:
+        lines.append("📋 *Edge cases (advisory)*")
+        for ec in sorted(edge_cases, key=lambda e: e.tier):
+            emoji = _EDGE_EMOJI.get(ec.tier, "•")
+            lines.append(f"    {emoji} Tier {ec.tier} · {ec.label} — {ec.suggestion}")
 
     # • Links
     lines.append(f"• *Links:* spec_id `{spec_id}` (live links added in Block 3)")
