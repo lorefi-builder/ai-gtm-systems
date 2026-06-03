@@ -1,10 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "buildCommand": null,
+  "buildCommand": "cp frontend/index.deploy.html frontend/index.html",
   "installCommand": null,
-  "outputDirectory": "frontend",
-  "rewrites": [
-    { "source": "/", "destination": "/index.deploy.html" }
-  ]
+  "outputDirectory": "frontend"
 }
