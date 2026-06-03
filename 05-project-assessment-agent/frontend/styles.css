@@ -314,12 +314,35 @@ details.draft[open] > summary { border-bottom: 1px solid var(--pane-line); }
   font-family: var(--sans); font-size: 13px; padding: 7px 10px; border-radius: 8px;
   border: 1px solid var(--sand-soft); background: #fff; color: var(--ink);
 }
+/* multi-select dropdown — toggle matches the single selects; panel overlays */
+.ms { position: relative; display: inline-block; }
+.ms-toggle {
+  font-family: var(--sans); font-size: 13px; padding: 7px 10px; border-radius: 8px;
+  border: 1px solid var(--sand-soft); background: #fff; color: var(--ink); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 8px; justify-content: space-between; min-width: 130px;
+}
+.ms-caret { color: var(--ink-mute); font-size: 10px; }
+.ms-panel {
+  position: absolute; z-index: 50; top: calc(100% + 4px); left: 0; min-width: 100%;
+  background: #fff; border: 1px solid var(--sand-soft); border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(19,23,34,0.14); padding: 6px; max-height: 260px; overflow-y: auto;
+}
+.ms-panel[hidden] { display: none; }
+.ms-opt {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px;
+  font-size: 13px; color: var(--ink-soft); cursor: pointer; white-space: nowrap;
+}
+.ms-opt:hover { background: var(--periwinkle-wash); }
+.ms-opt input { accent-color: var(--periwinkle); margin: 0; }
 .presets { display: flex; gap: 4px; margin-left: 4px; }
 .presets button {
   font-size: 11.5px; font-weight: 700; padding: 6px 10px; border-radius: 7px;
   border: 1px solid var(--pane-line); background: #fff; color: var(--periwinkle-dim); cursor: pointer;
 }
 .presets button:hover { background: var(--periwinkle-wash); }
+/* Active preset — mirrors the Cadence .seg-toggle button.on treatment. */
+.presets button.on { background: var(--periwinkle); border-color: var(--periwinkle); color: #fff; }
+.presets button.on:hover { background: var(--periwinkle); }
 .seg-toggle { display: inline-flex; border: 1px solid var(--sand-soft); border-radius: 8px; overflow: hidden; }
 .seg-toggle button {
   font-size: 12.5px; font-weight: 600; padding: 7px 13px; border: none; background: #fff; color: var(--ink-soft); cursor: pointer;
@@ -336,3 +359,87 @@ details.draft[open] > summary { border-bottom: 1px solid var(--pane-line); }
 .velo-stage { font-weight: 700; color: var(--ink); }
 .velo-gap { color: var(--ink-mute); font-size: 12.5px; }
 .velo-gap b { color: var(--periwinkle-dim); font-family: var(--mono); }
+
+/* --- scorecard row (business_funnel) — 7 tiles --- */
+.scorecard-row {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; margin: 14px 0 4px;
+}
+.scorecard {
+  background: var(--pane); border: 1px solid var(--pane-line); border-radius: 12px;
+  padding: 14px 16px; box-shadow: 0 1px 2px rgba(19,23,34,0.04);
+}
+.scorecard .sc-v {
+  font-family: var(--display); font-weight: 800; font-size: 25px; line-height: 1;
+  letter-spacing: -0.02em; color: var(--periwinkle-dim);
+}
+.scorecard .sc-l {
+  font-size: 11.5px; color: var(--ink-mute); margin-top: 6px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+}
+.scorecard .sc-info { color: var(--ink-mute); font-weight: 400; cursor: help; text-transform: none; }
+/* MoM-style delta line — small + muted so it doesn't compete with the number. */
+.scorecard .sc-d { margin-top: 5px; font-size: 11px; font-weight: 700; font-family: var(--mono); }
+.scorecard .sc-up { color: var(--slack-green-d); }
+.scorecard .sc-down { color: var(--slack-red-d); }
+.scorecard .sc-flat { color: var(--ink-mute); font-weight: 600; }
+
+/* --- hand-rolled SVG visuals (funnel + Sankey) --- */
+.viz-wrap { margin-top: 6px; }
+.viz-svg { width: 100%; height: auto; display: block; }
+/* Sankey now lives in a full-width card — cap + center so it doesn't balloon. */
+.viz-sankey .viz-svg { max-width: 760px; margin: 0 auto; }
+/* sankey text */
+.sk-src { fill: var(--ink); font-size: 12px; font-weight: 700; }
+.sk-label { fill: var(--ink-soft); font-size: 12px; font-weight: 600; }
+.sk-label.sk-zero { fill: var(--ink-mute); font-weight: 400; }
+.sk-empty { fill: var(--ink-mute); font-size: 13px; font-style: italic; }
+/* pipeline FLOW (transition) Sankey — node labels + per-transition legend */
+.fl-node { fill: var(--ink); font-size: 11.5px; font-weight: 700; }
+.fl-open { fill: var(--ink-mute); font-size: 10px; font-weight: 600; font-family: var(--mono); }
+.flow-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px;
+  padding-top: 12px; border-top: 1px dashed var(--pane-line);
+}
+.fl-item { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+.fl-swatch { width: 11px; height: 11px; border-radius: 3px; flex: 0 0 auto; opacity: 0.7; }
+.fl-route { color: var(--ink-soft); font-weight: 600; }
+.fl-stat { color: var(--ink-mute); font-family: var(--mono); font-size: 11.5px; }
+
+/* --- promoted Stage Velocity block --- */
+.velocity-block { margin-top: 16px; }
+.velocity-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+.velocity-head h3 { margin: 0; }
+.velocity-sub { font-size: 12.5px; color: var(--ink-mute); }
+.velocity-flow {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 0 2px;
+}
+.vf-chip {
+  font-size: 14px; font-weight: 700; color: #fff; background: var(--navy-card);
+  padding: 9px 16px; border-radius: 9px; white-space: nowrap;
+}
+.vf-conn {
+  flex: 1 1 36px; min-width: 36px; height: 2px; background: var(--periwinkle-line);
+  position: relative; display: flex; align-items: center; justify-content: center;
+}
+.vf-days {
+  position: relative; top: -1px; font-family: var(--mono); font-size: 12.5px; font-weight: 700;
+  color: var(--periwinkle-dim); background: var(--periwinkle-wash);
+  border: 1px solid var(--periwinkle-line); border-radius: 20px; padding: 3px 10px; white-space: nowrap;
+}
+/* reserved diagnostic slot (populated by a later pass — placeholder only) */
+.velocity-diag {
+  margin-top: 16px; padding: 12px 14px; border: 1px dashed var(--pane-line); border-radius: 10px;
+  background: var(--cream-warm); color: var(--ink-mute); font-size: 12.5px; font-style: italic;
+}
+
+/* --- responsive: reflow the 7-tile scorecard + stack rows on narrow widths --- */
+@media (max-width: 1200px) {
+  .scorecard-row { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 920px) {
+  .scorecard-row { grid-template-columns: repeat(3, 1fr); }
+  .cards.c2, .cards.c3 { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .scorecard-row { grid-template-columns: repeat(2, 1fr); }
+}

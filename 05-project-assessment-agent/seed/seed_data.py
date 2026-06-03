@@ -7,11 +7,16 @@ run it yourself once the schema is applied and ``.env`` is filled:
     python seed/seed_data.py
 
 What it creates (all fictional — Lorefi + invented customers):
-    * ~41 customer accounts across 6 domains
+    * 59 customer accounts across 6 domains
     * the 36-cell capability matrix + 5 escalation rules (from the JSON)
     * 12 full ~1-page RAG spec documents
-    * ~160 fct_spec rows over the last 6 months (realistic status mix)
-    * ~90 fct_opportunity rows from approved specs (funnel + varied win rates)
+    * 500 fct_spec rows over the last 6 months: a deterministic Demand-Intelligence
+      cohort of ~32 RED/escalated specs (guaranteed heatmap cells, emitted first)
+      plus ~468 organic specs. Organic status mix is weighted
+      ~56% approved / 20% in_review / 14% draft / 10% rejected; the cohort skews
+      ~55% approved / 30% rejected / 10% in_review / 5% draft.
+    * ~one fct_opportunity per approved spec (~55% close-gated funnel + varied win
+      rates), with stage history for velocity
     * one spec_lifecycle spine row per spec (IDs consistent across tables)
 
 The whole run is deterministic (fixed seed + a fixed "now"), so re-running
@@ -101,8 +106,10 @@ ACCOUNT_NAMES: dict[str, list[str]] = {
         "Veracity Lending", "Granite Trust", "Mercato Capital",
         "Beacon Hill Savings",
     ],
+    # NOTE: "Cedarbrook Health" intentionally omitted — it is a live-demo hero
+    # account and must have NO pre-seeded specs so the demo is a clean first run.
     "Healthcare": [
-        "Cedarbrook Health", "Vantage Medical", "Lumicare Diagnostics",
+        "Vantage Medical", "Lumicare Diagnostics",
         "Northwind Bio", "Solace Health Systems", "Marrow Labs",
         "Evergreen Clinics", "Brightpath Care", "Helix Diagnostics",
         "Meadowlark Health",
@@ -144,6 +151,24 @@ ACV_RANGE: dict[str, tuple[int, int]] = {
     "SMB": (14_000, 65_000),
 }
 
+# Estimated deal value at discovery — set on EVERY spec (all statuses), so
+# declined/escalated demand carries a dollar figure (fct_opportunity.amount only
+# exists for approved specs). Sized by the SAME segment ranges + fde bump as the
+# opportunity amount (build_opportunities), so an approved spec's estimate is the
+# same ballpark as the amount its opportunity eventually gets.
+#
+# It draws from a SEPARATE, independently-seeded RNG so adding it does NOT perturb
+# the main `rng` stream: every protected count (500 specs / 274 opps / 74 won /
+# the DI cohort / stage history) stays byte-identical to before this change.
+_est_rng = random.Random(SEED + 100)
+
+
+def estimate_value(segment: str, fde_count: int) -> float:
+    """Plausible discovery-time deal value for a spec, by the account's segment.
+    Mirrors build_opportunities' amount formula but on the independent _est_rng."""
+    lo, hi = AMOUNT_RANGE[segment]
+    return round(_est_rng.uniform(lo, hi) * (1 + 0.05 * fde_count), -3)
+
 # Win-type mix on Closed Won opps. new_logo is the plurality everywhere; renewal
 # is second (and Enterprise skews renewal-heavy); the other two are smaller.
 WIN_TYPE_WEIGHTS: dict[str, dict[str, float]] = {
@@ -161,11 +186,57 @@ WIN_TYPE_ACV_MULT: dict[str, float] = {
     "reactivation": 0.70,
 }
 
-# Opportunity stage path + per-transition base gap (days) for stage velocity.
+# Opportunity stage path + stage velocity.
 OPEN_STAGES = ["Discovery", "Proposal", "Negotiation"]
-# index 0: Discovery->Proposal, 1: Proposal->Negotiation, 2: Negotiation->Closed
-_STAGE_GAP_BOUNDS = [(5, 18), (7, 21), (7, 30)]
 _SEGMENT_VELOCITY_FACTOR = {"Enterprise": 1.4, "Mid-Market": 1.0, "SMB": 0.8}
+
+# Journey-variation probabilities for stage history (deterministic, seed=4207).
+# Most deals keep the full linear path Discovery->Proposal->Negotiation->terminal;
+# a minority vary. These gate ONLY the intermediate path — opp["stage"], is_won,
+# win_type, amount and created_at are never touched, so all headline numbers
+# (500 specs / 274 opps / 74 won / closed-won total / DI cohort) are preserved.
+P_SKIP_PROPOSAL = 0.18      # Discovery->Negotiation, bypassing Proposal
+P_LOST_AT_DISCOVERY = 0.12  # Closed Lost exits straight from Discovery
+P_LOST_AT_PROPOSAL = 0.18   # Closed Lost exits from Proposal (no Negotiation)
+P_WON_FROM_PROPOSAL = 0.20  # Closed Won closes from Proposal (no Negotiation)
+
+# Day-gap bounds keyed by the ACTUAL (from -> to) transition. A Discovery->
+# Negotiation skip spans roughly the two gaps it bypasses; early closes are
+# moderate. Used by build_stage_history; falls back to (7, 21) if a pair is absent.
+_STAGE_GAP_MAP: dict[tuple[str, str], tuple[int, int]] = {
+    ("Discovery", "Proposal"): (5, 18),
+    ("Proposal", "Negotiation"): (7, 21),
+    ("Negotiation", "Closed Won"): (7, 30),
+    ("Negotiation", "Closed Lost"): (7, 30),
+    ("Discovery", "Negotiation"): (12, 39),   # Proposal skipped (~ sum of bypassed gaps)
+    ("Discovery", "Closed Lost"): (5, 22),    # lost early, straight from Discovery
+    ("Proposal", "Closed Lost"): (7, 28),     # lost from Proposal (no Negotiation)
+    ("Proposal", "Closed Won"): (7, 28),      # won from Proposal (no Negotiation)
+}
+
+# Demand-Intelligence guaranteed-cohort floor. matrix_color and escalation_flags
+# are otherwise pure byproducts of the random (domain x task_type) draws, so DI
+# heatmap cells aren't guaranteed populated. This cohort is emitted BEFORE the
+# random fill: each entry forces `count` specs into its domain's worst-available
+# matrix cell (RED where the domain has one — derived from the matrix, never
+# hardcoded — else its most severe color) with the named escalation flag on, and
+# a status weighted toward approved/rejected so they carry opportunities+amounts
+# (approved) or read as declined demand (rejected), not just drafts.
+# (domain, segment, flag, count). Segment is read from the assigned ACCOUNT.
+# All five entries land on a genuine RED matrix cell (matrix_color always agrees
+# with capability_matrix.json) — new_modality_av is placed on Financial Services,
+# whose RED cell is Conversational AI (voice/video assistant), a believable fit.
+DI_COHORT: list[tuple[str, str, str, int]] = [
+    ("Healthcare", "Enterprise", "pii_regulated", 13),                # dollar plurality (largest amounts via Enterprise)
+    ("Government", "Enterprise", "nonstandard_platform", 5),          # 5 + 4 = ~9 nonstandard-platform
+    ("Government", "Mid-Market", "nonstandard_platform", 4),
+    ("Legal", "Enterprise", "pii_regulated", 6),
+    ("Financial Services", "Enterprise", "new_modality_av", 4),       # RED cell (Conversational AI) + flag
+]
+
+# Status mix for cohort specs — skewed to approved/rejected (real won/declined
+# demand) vs. the organic [approved, in_review, draft, rejected] weighting.
+_DI_STATUS_WEIGHTS = [0.55, 0.30, 0.10, 0.05]  # approved, rejected, in_review, draft
 
 
 # --- small helpers -----------------------------------------------------------
@@ -411,13 +482,92 @@ def created_at_for_status(status: str) -> dt.datetime:
     )
 
 
+# --- Demand-Intelligence guaranteed cohort -----------------------------------
+def _reddest_task_type(domain: str, matrix: dict[tuple[str, str], str]) -> str:
+    """Task_type whose matrix cell is the most severe color for this domain
+    (red > yellow > green), derived from the matrix — never a hardcoded color.
+    Returns a RED cell where the domain has one; otherwise its worst color."""
+    severity = {"red": 3, "yellow": 2, "green": 1}
+    return max(
+        (tt for (d, tt) in matrix if d == domain),
+        key=lambda tt: (severity[matrix[(domain, tt)]], tt),  # tie-break: task_type name
+    )
+
+
+def build_di_cohort(
+    accounts: list[dict[str, Any]],
+    matrix: dict[tuple[str, str], str],
+) -> list[dict[str, Any]]:
+    """Deterministic floor of RED/escalated specs for the DI heatmap (see
+    DI_COHORT). Emitted before the random fill. Same row shape as organic specs.
+
+    Heatmap segment is read from the ASSIGNED ACCOUNT (fct_spec has no segment;
+    it lives on dim_account and is denormalized onto fct_opportunity), so we
+    prefer an account matching (domain, segment); if none exists we fall back to
+    any account in the domain (the cell's segment then follows that account)."""
+    specs: list[dict[str, Any]] = []
+    j = 0
+    for domain, segment, flag, count in DI_COHORT:
+        task_type = _reddest_task_type(domain, matrix)
+        color = matrix[(domain, task_type)]
+        matched = [a for a in accounts if a["domain"] == domain and a["segment"] == segment]
+        pool = matched if matched else [a for a in accounts if a["domain"] == domain]
+        for k in range(count):
+            account = pool[k % len(pool)]  # cycle the matching accounts
+            status = weighted_choice(
+                ["approved", "rejected", "in_review", "draft"], _DI_STATUS_WEIGHTS
+            )
+            created = created_at_for_status(status)
+            counts = resource_counts(domain, color)
+            base_conf = {"green": 0.88, "yellow": 0.74, "red": 0.58}[color]
+            confidence = round(
+                clamp(base_conf + rng.uniform(-0.08, 0.08) - 0.06, 0.30, 0.98), 3
+            )  # -0.06 == one forced escalation flag (mirrors the organic formula)
+            approved_at = None
+            if status == "approved":
+                approved_at = iso(cap_now(created + dt.timedelta(days=rng.randint(3, 21))))
+            specs.append(
+                {
+                    "spec_id": new_uuid(),
+                    "transcript_id": f"txn_di_{j:04d}",
+                    "account_id": account["account_id"],
+                    "domain": domain,
+                    "task_type": task_type,
+                    "matrix_color": color,
+                    "escalation_flags": [flag],          # the named flag, forced on
+                    "confidence": confidence,
+                    "ec_count": counts["ec"],
+                    "tdm_count": counts["tdm"],
+                    "dops_count": counts["dops"],
+                    "fde_count": counts["fde"],
+                    "resource_flags": resource_flags(domain, color, [flag]),
+                    "status": status,
+                    "rejection_reason": (
+                        rng.choice(REJECTION_REASONS) if status == "rejected" else None
+                    ),
+                    "opportunity_id": None,
+                    "estimated_value": estimate_value(account["segment"], counts["fde"]),
+                    "created_at": iso(created),
+                    "approved_at": approved_at,
+                    "_account": account,
+                }
+            )
+            j += 1
+    return specs
+
+
 # --- fct_spec ----------------------------------------------------------------
 def build_specs(
     accounts: list[dict[str, Any]],
     matrix: dict[tuple[str, str], str],
-    n: int = 240,
+    n: int = 500,
 ) -> list[dict[str, Any]]:
-    """~240 assessed/draft specs. matrix_color always agrees with the matrix."""
+    """~500 assessed/draft specs. matrix_color always agrees with the matrix.
+
+    A deterministic DI cohort (build_di_cohort) is emitted FIRST to guarantee the
+    Demand-Intelligence heatmap cells are populated; the remaining n - cohort
+    specs fill in organically exactly as before.
+    """
     task_types = sorted({tt for (_d, tt) in matrix})
     # Enterprise still attracts the most discovery, but the skew is gentle
     # (1.6 / 1.3 / 1.0) so SMB keeps a real share of specs (~20%) rather than
@@ -427,8 +577,10 @@ def build_specs(
         for a in accounts
     ]
 
-    specs: list[dict[str, Any]] = []
-    for i in range(n):
+    # Deterministic DI cohort first, then organic fill for the remainder.
+    specs: list[dict[str, Any]] = build_di_cohort(accounts, matrix)
+    organic_n = max(0, n - len(specs))
+    for i in range(organic_n):
         account = rng.choices(accounts, weights=acct_weights, k=1)[0]
         domain = account["domain"]
         task_type = rng.choice(task_types)
@@ -472,6 +624,7 @@ def build_specs(
                     rng.choice(REJECTION_REASONS) if status == "rejected" else None
                 ),
                 "opportunity_id": None,  # back-filled for approved specs below
+                "estimated_value": estimate_value(account["segment"], counts["fde"]),
                 "created_at": iso(created),
                 "approved_at": approved_at,
                 # carried for downstream generation, dropped before insert:
@@ -507,8 +660,8 @@ def build_opportunities(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """One opportunity per approved spec; narrowing funnel + varied win rates.
 
     Mutates each approved spec's ``opportunity_id`` so fct_spec and
-    fct_opportunity agree. ~45% of opportunities close naturally (resolved
-    Won/Lost by win_rate). At ~240 specs the volume is enough that every segment
+    fct_opportunity agree. ~55% of opportunities close naturally (resolved
+    Won/Lost by win_rate). At ~500 specs the volume is enough that every segment
     carries both open and closed deals on its own — no flooring hack needed.
     """
     opportunities: list[dict[str, Any]] = []
@@ -529,7 +682,7 @@ def build_opportunities(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         spec["opportunity_id"] = opportunity_id  # keep the spine consistent
 
         # Build the opp OPEN first (Discovery > Proposal > Negotiation funnel),
-        # then maybe close it. ~45% close naturally.
+        # then maybe close it. ~55% close naturally.
         opp = {
             "opportunity_id": opportunity_id,
             "spec_id": spec["spec_id"],
@@ -549,7 +702,7 @@ def build_opportunities(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "acv": None,        # computed just below
         }
 
-        if rng.random() < 0.45:
+        if rng.random() < 0.55:
             _close_opportunity(opp)
 
         # ACV (revenue): base range by segment, scaled up for won deals by win type
@@ -564,25 +717,70 @@ def build_opportunities(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 # --- fct_opportunity_stage_history -------------------------------------------
+def _journey_path(opp: dict[str, Any]) -> list[str]:
+    """Ordered list of stages this opp passed through: always starts at Discovery,
+    always ends at the opp's existing final stage (opp["stage"]). Introduces
+    realistic variation off the seeded rng:
+      * open-at-Negotiation deals may skip Proposal (Discovery->Negotiation);
+      * Closed Lost deals may exit early (Discovery->Closed Lost, or
+        Discovery->Proposal->Closed Lost) instead of reaching Negotiation;
+      * Closed Won deals may close from Proposal (Discovery->Proposal->Closed Won);
+      * otherwise the full linear path (still the dominant trunk).
+    Reads opp["stage"] only — never mutates the opp.
+    """
+    final = opp["stage"]
+
+    # Open deals: Discovery up to the current open stage; only an open-at-
+    # Negotiation deal can have skipped Proposal on the way.
+    if final in OPEN_STAGES:
+        if final == "Discovery":
+            return ["Discovery"]
+        if final == "Proposal":
+            return ["Discovery", "Proposal"]
+        # final == "Negotiation"
+        if rng.random() < P_SKIP_PROPOSAL:
+            return ["Discovery", "Negotiation"]
+        return ["Discovery", "Proposal", "Negotiation"]
+
+    # Closed Lost: may exit early, else reach Negotiation (optionally skipping Proposal).
+    if final == "Closed Lost":
+        r = rng.random()
+        if r < P_LOST_AT_DISCOVERY:
+            return ["Discovery", "Closed Lost"]
+        if r < P_LOST_AT_DISCOVERY + P_LOST_AT_PROPOSAL:
+            return ["Discovery", "Proposal", "Closed Lost"]
+        if rng.random() < P_SKIP_PROPOSAL:
+            return ["Discovery", "Negotiation", "Closed Lost"]
+        return ["Discovery", "Proposal", "Negotiation", "Closed Lost"]
+
+    # Closed Won: may close from Proposal, else reach Negotiation (optionally skipping Proposal).
+    if rng.random() < P_WON_FROM_PROPOSAL:
+        return ["Discovery", "Proposal", "Closed Won"]
+    if rng.random() < P_SKIP_PROPOSAL:
+        return ["Discovery", "Negotiation", "Closed Won"]
+    return ["Discovery", "Proposal", "Negotiation", "Closed Won"]
+
+
 def build_stage_history(opportunities: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """One row per (opportunity, stage) — models Salesforce Opportunity History.
 
-    Each opp's path is Discovery -> Proposal -> Negotiation -> (terminal). For an
-    OPEN opp the current stage's exited_at is null; for a CLOSED opp the terminal
-    Closed Won/Lost row's exited_at is null and we align opp.closed_at to it. The
-    stage in fct_opportunity always equals the latest open (exited_at=null) stage
-    here. Per-transition gaps (scaled by segment) make stage velocity computable.
+    Journey variation (deterministic, seed=4207): most deals walk the full linear
+    path Discovery -> Proposal -> Negotiation -> (terminal), but a minority skip
+    Proposal, exit Closed Lost early (from Discovery or Proposal), or close Won
+    from Proposal — see _journey_path + the P_* probabilities. ONLY the
+    intermediate path varies; opp["stage"], is_won, win_type, amount and
+    created_at are never touched, so every headline count is preserved.
+
+    The final stage's row has exited_at=null (current open stage OR terminal); for
+    a closed opp we align opp.closed_at to that terminal entry. Per-transition gaps
+    come from _STAGE_GAP_MAP (scaled by segment) and rows chain contiguously
+    (exited_at[N] == entered_at[N+1]) so transition self-joins stay clean.
     """
     rows: list[dict[str, Any]] = []
     for opp in opportunities:
         factor = _SEGMENT_VELOCITY_FACTOR.get(opp["segment"], 1.0)
-        stage = opp["stage"]
-        if stage in OPEN_STAGES:
-            path = OPEN_STAGES[: OPEN_STAGES.index(stage) + 1]
-            closed = False
-        else:
-            path = OPEN_STAGES + [stage]  # full path through to the terminal stage
-            closed = True
+        path = _journey_path(opp)
+        closed = path[-1] not in OPEN_STAGES
 
         cur = dt.datetime.fromisoformat(opp["created_at"])  # entered Discovery
         for i, st in enumerate(path):
@@ -592,9 +790,18 @@ def build_stage_history(opportunities: list[dict[str, Any]]) -> list[dict[str, A
                 if closed:
                     opp["closed_at"] = iso(cur)  # align closed_at to the terminal entry
             else:
-                lo, hi = _STAGE_GAP_BOUNDS[i]
+                lo, hi = _STAGE_GAP_MAP.get((st, path[i + 1]), (7, 21))
                 gap = max(1, round(rng.randint(lo, hi) * factor))
                 nxt = cap_now(cur + dt.timedelta(days=gap))
+                # entered_at must be STRICTLY increasing within an opp: when a path
+                # runs up against NOW, cap_now() can clamp consecutive entries to the
+                # same instant, which would create same-timestamp rows and corrupt the
+                # transition self-join (phantom self-loops / backward edges). If the
+                # cap didn't move us forward, nudge +1 minute. Strict increase wins
+                # over the soft NOW cap here — a deal's stages can't share an instant,
+                # and a few minutes past NOW on a near-current final entry is realistic.
+                if nxt <= cur:
+                    nxt = cur + dt.timedelta(minutes=1)
                 rows.append(_history_row(opp, st, cur, nxt))
                 cur = nxt
     return rows

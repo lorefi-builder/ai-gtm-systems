@@ -16,6 +16,7 @@ the ``data_freshness`` field documents the production caveat.
 
 from __future__ import annotations
 
+import json
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
@@ -67,6 +68,16 @@ def dashboard_data(
         return _build(date_from, date_to, cadence, use_case, segment, region)
     except Exception as exc:  # clean JSON error, never a stack trace
         return to_error_response(exc)
+
+
+# --- filter helpers ----------------------------------------------------------
+def _parse_multi(raw: Optional[str]) -> List[str]:
+    """Parse a comma-joined multi-select param into a list of values. Empty/None
+    -> [] (meaning "no filter on this dimension" — all pass). Use-case values
+    contain no commas (they use ' · '), so the split is unambiguous."""
+    if not raw:
+        return []
+    return [v.strip() for v in raw.split(",") if v.strip()]
 
 
 # --- date helpers ------------------------------------------------------------
@@ -132,6 +143,11 @@ def _build(
     if cadence not in ("daily", "weekly", "monthly"):
         cadence = "monthly"
 
+    # Multi-select filters: comma-joined params -> lists. Empty list = all pass.
+    use_cases = _parse_multi(use_case)
+    segments = _parse_multi(segment)
+    regions = _parse_multi(region)
+
     today = datetime.now(timezone.utc).date()
     df, dt_to = _parse_date(date_from), _parse_date(date_to)
     if df is None and dt_to is None:
@@ -141,10 +157,14 @@ def _build(
         end = dt_to if dt_to is not None else today      # blank -> today
 
     # --- pull warehouse models (deleted specs excluded) ----------------------
+    # DI needs matrix_color / escalation_flags / estimated_value, plus account_id
+    # to join a segment (and region) onto EVERY spec — including rejected / non-opp
+    # ones, which the opportunity table can't segment (opps exist for approved only).
     specs = select(
         "fct_spec",
         {"status": "neq.deleted"},
-        columns="spec_id,status,rejection_reason,domain,task_type,created_at",
+        columns="spec_id,status,rejection_reason,domain,task_type,created_at,"
+        "account_id,matrix_color,escalation_flags,estimated_value",
     )
     opps = select(
         "fct_opportunity",
@@ -154,6 +174,15 @@ def _build(
         "fct_opportunity_stage_history",
         columns="opportunity_id,stage,entered_at,exited_at",
     )
+
+    # dim_account join: account_id -> segment / region, attached onto each spec so
+    # ALL declined demand (not just approved) can be sliced by segment/region.
+    dim_accounts = select("dim_account", columns="account_id,segment,region")
+    acct_segment = {a["account_id"]: a.get("segment") for a in dim_accounts}
+    acct_region = {a["account_id"]: a.get("region") for a in dim_accounts}
+    for s in specs:
+        s["segment"] = acct_segment.get(s.get("account_id"))
+        s["region"] = acct_region.get(s.get("account_id"))
 
     spec_meta = {s["spec_id"]: (s.get("domain"), s.get("task_type")) for s in specs}
 
@@ -172,14 +201,14 @@ def _build(
             return False
         return d <= end
 
-    # filtered specs: date + use_case (segment/region don't apply to specs)
+    # filtered specs: date + use_case membership (segment/region don't apply to specs)
     f_specs = [
         s for s in specs
         if in_range(s.get("created_at"))
-        and (use_case is None or _use_case(s.get("domain"), s.get("task_type")) == use_case)
+        and (not use_cases or _use_case(s.get("domain"), s.get("task_type")) in use_cases)
     ]
 
-    # filtered opps: date + use_case (via the opp's spec) + segment + region
+    # filtered opps: date + use_case (via the opp's spec) + segment + region membership
     def opp_uc(o: Dict[str, Any]) -> Optional[str]:
         dm, tt = spec_meta.get(o.get("spec_id"), (None, None))
         return _use_case(dm, tt)
@@ -187,12 +216,55 @@ def _build(
     f_opps = [
         o for o in opps
         if in_range(o.get("created_at"))
-        and (use_case is None or opp_uc(o) == use_case)
-        and (segment is None or o.get("segment") == segment)
-        and (region is None or o.get("region") == region)
+        and (not use_cases or opp_uc(o) in use_cases)
+        and (not segments or o.get("segment") in segments)
+        and (not regions or o.get("region") in regions)
     ]
     opp_ids = {o["opportunity_id"] for o in f_opps}
     f_hist = [h for h in hist if h.get("opportunity_id") in opp_ids]
+
+    # DI spec list: date + use_case + segment + region (specs now carry segment
+    # and region via the dim_account join, so the segment/region multi-select
+    # filters apply here too — consistent with f_opps. Kept separate from f_specs,
+    # which stays date + use_case only so the existing spec sections are unchanged.
+    di_specs = [
+        s for s in specs
+        if in_range(s.get("created_at"))
+        and (not use_cases or _use_case(s.get("domain"), s.get("task_type")) in use_cases)
+        and (not segments or s.get("segment") in segments)
+        and (not regions or s.get("region") in regions)
+    ]
+
+    # Prior-period rows for scorecard deltas. Source: re-filter the RAW `specs` /
+    # `opps` lists (still in scope here, before the f_* filter) to the immediately
+    # preceding equal-length window — no refetch needed. Window length is the
+    # current span in days; the prior window is [start - window_len, start) (half-
+    # open so it doesn't double-count `start`, which belongs to the current
+    # window). Non-date filters (use_case for specs; use_case + segment + region
+    # for opps) are applied identically via the same closures. Skipped when
+    # date_from is missing (start is None) -> prior stays None.
+    prior_specs: Optional[List[Dict[str, Any]]] = None
+    prior_opps: Optional[List[Dict[str, Any]]] = None
+    if start is not None:
+        window_len = (end - start).days
+        prior_start = start - timedelta(days=window_len)
+
+        def in_prior(created: Any) -> bool:
+            d = _row_date(created)
+            return d is not None and prior_start <= d < start
+
+        prior_specs = [
+            s for s in specs
+            if in_prior(s.get("created_at"))
+            and (not use_cases or _use_case(s.get("domain"), s.get("task_type")) in use_cases)
+        ]
+        prior_opps = [
+            o for o in opps
+            if in_prior(o.get("created_at"))
+            and (not use_cases or opp_uc(o) in use_cases)
+            and (not segments or o.get("segment") in segments)
+            and (not regions or o.get("region") in regions)
+        ]
 
     # Effective start (for period enumeration) when date_from is "earliest".
     eff_start = start
@@ -208,9 +280,9 @@ def _build(
                 "date_from": start.isoformat() if start else None,
                 "date_to": end.isoformat(),
                 "cadence": cadence,
-                "use_case": use_case,
-                "segment": segment,
-                "region": region,
+                "use_case": use_cases,
+                "segment": segments,
+                "region": regions,
             },
             "available_use_cases": available_use_cases,
             "available_segments": available_segments,
@@ -221,6 +293,10 @@ def _build(
         "spec_generation": _section_spec_generation(f_specs, periods, pof),
         "spec_to_opportunity": _section_spec_to_opp(f_hist),
         "opportunity_to_won": _section_opp_to_won(f_opps, periods, pof),
+        # Additive (read the already-filtered f_specs / f_opps — inherit filtering):
+        "business_funnel": _section_business_funnel(f_specs, f_opps, prior_specs, prior_opps),
+        "pipeline_flow": _section_pipeline_flow(f_hist, f_opps),
+        "demand_intelligence": _section_demand_intelligence(di_specs),
     }
 
 
@@ -434,3 +510,272 @@ def _revenue_per_win_type(opps: List[Dict[str, Any]]) -> Dict[str, Any]:
             f"(~{pct}% above {WIN_TYPE_LABELS[second[0]]})"
         )
     return {"by_type": by_type, "note": note}
+
+
+# --- SECTION 4: Business funnel + scorecards ---------------------------------
+def _funnel_metrics(
+    specs: List[Dict[str, Any]], opps: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """The shared scorecard metrics over one (specs, opps) pair.
+
+    Reused for both the current window and the prior window (so the deltas are
+    apples-to-apples). Terminal state is keyed on ``stage`` (the canonical field):
+    won = Closed Won, open = the three pre-terminal stages. ACV uses ``acv`` with
+    ``amount`` as a fallback. Conversion rates are 0-1 floats (frontend formats as
+    %), divide-by-zero guarded to None.
+    """
+    terminal = ("Closed Won", "Closed Lost")
+
+    def acv_of(o: Dict[str, Any]) -> float:
+        v = o.get("acv")
+        return float(v) if v is not None else float(o.get("amount") or 0.0)
+
+    won = [o for o in opps if o.get("stage") == "Closed Won"]
+    open_opps = [o for o in opps if o.get("stage") not in terminal]
+    n_specs, n_opps, n_won = len(specs), len(opps), len(won)
+
+    return {
+        "specs": n_specs,
+        "opportunities": n_opps,
+        "won": n_won,
+        "won_acv": round(sum(acv_of(o) for o in won), 2),
+        "open_pipeline": round(sum(float(o.get("amount") or 0.0) for o in open_opps), 2),
+        # spec -> opp conversion (all opps / all specs)
+        "spec_to_opp_rate": round(n_opps / n_specs, 4) if n_specs else None,
+        # blended headline win rate: won over ALL opps (NOT win-among-closed)
+        "win_rate_all": round(n_won / n_opps, 4) if n_opps else None,
+    }
+
+
+def _section_business_funnel(
+    specs: List[Dict[str, Any]],
+    opps: List[Dict[str, Any]],
+    prior_specs: Optional[List[Dict[str, Any]]] = None,
+    prior_opps: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Scalar scorecards + funnel counts for the current filter, plus a parallel
+    ``prior`` block (same metrics over the immediately-preceding equal-length
+    window) for MoM-style deltas.
+
+    Inherits filtering for free: ``specs`` is f_specs (date + use_case; specs
+    carry no segment) and ``opps`` is f_opps (date + use_case + segment + region).
+    ``prior_specs`` / ``prior_opps`` are the same raw lists re-filtered to the
+    prior window (computed in _build). ``prior`` is None when the prior window has
+    no rows or date_from is missing (frontend then hides deltas).
+    """
+    terminal = ("Closed Won", "Closed Lost")
+    result = _funnel_metrics(specs, opps)
+    # `closed` is funnel-tier only (the Sankey/funnel SVG reads it); not in the
+    # shared metric set and not needed in `prior`.
+    result["closed"] = sum(1 for o in opps if o.get("stage") in terminal)
+
+    if (prior_specs is None and prior_opps is None) or (not prior_specs and not prior_opps):
+        result["prior"] = None
+    else:
+        result["prior"] = _funnel_metrics(prior_specs or [], prior_opps or [])
+    return result
+
+
+# --- SECTION 5: Pipeline FLOW (stage-to-stage transitions, dollar-weighted) ---
+def _section_pipeline_flow(
+    hist: List[Dict[str, Any]], opps: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Transition-FLOW aggregate: stage-to-stage deal journeys, dollar-weighted.
+
+    Built from f_hist (already filtered) joined to f_opps for amount — amount lives
+    on fct_opportunity, NOT on the history rows. For each opp we order its history
+    rows by entered_at and pair consecutive (from -> to) transitions where the
+    from-row has exited_at NOT NULL (the still-open/terminal row has exited_at
+    NULL and is the LAST row; terminal Closed Won/Lost are real stages, so
+    Negotiation -> Closed Won etc. fall out naturally). from==to pairs are excluded
+    defensively. ``open_now`` carries deals still sitting in each non-terminal
+    stage (exited_at IS NULL, stage in OPEN_STAGES) so no deals vanish from the
+    diagram. Transitions are emitted in funnel order (by from-rank, then to-rank).
+
+    Inherits filtering for free: in _build, f_hist is already restricted to
+    f_opps' opportunity_ids, and f_opps carries the date/use_case/segment/region
+    filter — so this aggregate is implicitly filtered the same way.
+    """
+    amount_of = {
+        o["opportunity_id"]: float(o.get("amount") or 0.0)
+        for o in opps
+        if o.get("opportunity_id")
+    }
+    rank = {st: i for i, st in enumerate(STAGE_ORDER)}
+
+    by_opp: Dict[Any, List[Dict[str, Any]]] = defaultdict(list)
+    for h in hist:
+        by_opp[h.get("opportunity_id")].append(h)
+
+    trans_deals: Counter = Counter()
+    trans_amount: Dict[tuple, float] = defaultdict(float)
+    open_deals: Counter = Counter()
+    open_amount: Dict[str, float] = defaultdict(float)
+
+    for oid, rows in by_opp.items():
+        amt = amount_of.get(oid, 0.0)
+        # Order by entered_at; among any ties, a still-open (exited_at IS NULL) row
+        # sorts last so it never becomes a `from` of a transition.
+        rows.sort(key=lambda r: (str(r.get("entered_at") or ""), r.get("exited_at") is None))
+        for i in range(len(rows) - 1):
+            a, b = rows[i], rows[i + 1]
+            if a.get("exited_at") is None:
+                continue  # didn't transition out (defensive)
+            frm, to = a.get("stage"), b.get("stage")
+            if not frm or not to or frm == to:
+                continue  # exclude from==to (defensive)
+            trans_deals[(frm, to)] += 1
+            trans_amount[(frm, to)] += amt
+        for r in rows:
+            if r.get("exited_at") is None and r.get("stage") in OPEN_STAGES:
+                open_deals[r.get("stage")] += 1
+                open_amount[r.get("stage")] += amt
+
+    transitions = [
+        {
+            "from": frm,
+            "to": to,
+            "deals": trans_deals[(frm, to)],
+            "amount": round(trans_amount[(frm, to)], 2),
+        }
+        for (frm, to) in sorted(
+            trans_deals, key=lambda p: (rank.get(p[0], 99), rank.get(p[1], 99))
+        )
+    ]
+    open_now = [
+        {"stage": st, "deals": open_deals[st], "amount": round(open_amount[st], 2)}
+        for st in OPEN_STAGES
+        if open_deals[st] > 0
+    ]
+    return {"transitions": transitions, "open_now": open_now}
+
+
+# --- SECTION 6: Demand Intelligence (capability-gap / declined demand) --------
+def _flags(spec: Dict[str, Any]) -> List[str]:
+    """escalation_flags as a list of flag names. PostgREST/jsonb usually decodes
+    to a list already, but handle a JSON-string form too (defensive)."""
+    v = spec.get("escalation_flags")
+    if isinstance(v, list):
+        return v
+    if isinstance(v, str):
+        try:
+            parsed = json.loads(v)
+            return parsed if isinstance(parsed, list) else []
+        except (ValueError, TypeError):
+            return []
+    return []
+
+
+def _section_demand_intelligence(specs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Demand-Intelligence aggregates over the DI-filtered spec list.
+
+    Definitions (decided for this tab):
+      * GAP (capability-gap / escalated demand) = matrix_color == 'red' OR a
+        non-empty escalation_flags list.
+      * DECLINED = status == 'rejected' (demand actually turned away).
+      * All dollar figures use estimated_value (present on EVERY spec, all
+        statuses), so declined/escalated demand can be dollar-weighted.
+
+    Specs already carry a `segment` (and `region`) from the dim_account join, so
+    a spec lands in the (domain, segment) heatmap cell of its account.
+    """
+    def ev(s: Dict[str, Any]) -> float:
+        return float(s.get("estimated_value") or 0.0)
+
+    def is_gap(s: Dict[str, Any]) -> bool:
+        return s.get("matrix_color") == "red" and bool(_flags(s))
+
+    gap = [s for s in specs if is_gap(s)]
+    rejected = [s for s in specs if s.get("status") == "rejected"]
+
+    # --- headline ------------------------------------------------------------
+    dom_gap_val: Dict[str, float] = defaultdict(float)
+    for s in gap:
+        dom_gap_val[s.get("domain")] += ev(s)
+    top_domain = max(dom_gap_val, key=dom_gap_val.get) if dom_gap_val else None
+
+    headline = {
+        "gap_value": round(sum(ev(s) for s in gap), 2),
+        "gap_specs": len(gap),
+        "declined_value": round(sum(ev(s) for s in rejected), 2),
+        "declined_specs": len(rejected),
+        "top_domain": top_domain,
+    }
+
+    # --- heatmap: one (domain, segment) cell per cell with GAP demand --------
+    cells: Dict[tuple, Dict[str, Any]] = defaultdict(
+        lambda: {"value": 0.0, "specs": 0, "declined_specs": 0}
+    )
+    for s in gap:
+        c = cells[(s.get("domain"), s.get("segment") or "Unknown")]
+        c["value"] += ev(s)
+        c["specs"] += 1
+        if s.get("status") == "rejected":
+            c["declined_specs"] += 1  # rejected among this cell's gap demand
+    heatmap = sorted(
+        (
+            {
+                "domain": d, "segment": seg,
+                "value": round(c["value"], 2),
+                "specs": c["specs"],
+                "declined_specs": c["declined_specs"],
+            }
+            for (d, seg), c in cells.items()
+        ),
+        key=lambda x: x["value"], reverse=True,
+    )
+
+    # --- by_reason: each escalation flag a bucket (a spec with N flags counts in
+    #     N reasons); RED specs with NO flag -> a "RED (capability)" bucket so
+    #     every gap spec is represented at least once. -------------------------
+    reason_val: Dict[str, float] = defaultdict(float)
+    reason_cnt: Counter = Counter()
+    for s in gap:
+        flags = _flags(s)
+        if flags:
+            for fl in flags:
+                reason_val[fl] += ev(s)
+                reason_cnt[fl] += 1
+        else:
+            reason_val["RED (capability)"] += ev(s)
+            reason_cnt["RED (capability)"] += 1
+    by_reason = sorted(
+        (
+            {"reason": r, "value": round(reason_val[r], 2), "specs": reason_cnt[r]}
+            for r in reason_val
+        ),
+        key=lambda x: x["value"], reverse=True,
+    )
+
+    # --- by_domain: gap_* over gap specs; declined_* over all rejected specs --
+    dom: Dict[str, Dict[str, Any]] = defaultdict(
+        lambda: {"gap_value": 0.0, "gap_specs": 0, "declined_value": 0.0, "declined_specs": 0}
+    )
+    for s in gap:
+        d = dom[s.get("domain")]
+        d["gap_value"] += ev(s)
+        d["gap_specs"] += 1
+    for s in rejected:
+        d = dom[s.get("domain")]
+        d["declined_value"] += ev(s)
+        d["declined_specs"] += 1
+    by_domain = sorted(
+        (
+            {
+                "domain": dn,
+                "gap_value": round(v["gap_value"], 2),
+                "gap_specs": v["gap_specs"],
+                "declined_value": round(v["declined_value"], 2),
+                "declined_specs": v["declined_specs"],
+            }
+            for dn, v in dom.items()
+        ),
+        key=lambda x: x["gap_value"], reverse=True,
+    )
+
+    return {
+        "headline": headline,
+        "heatmap": heatmap,
+        "by_reason": by_reason,
+        "by_domain": by_domain,
+    }

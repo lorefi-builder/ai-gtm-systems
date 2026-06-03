@@ -16,8 +16,15 @@ const state = {
   deal: [],     // deal-tracking messages
   dashboard: null,
   charts: {},   // live Chart.js instances (destroyed on refresh)
-  // Global dashboard filters (empty string = not applied; blank dates -> backend YTD).
-  filters: { date_from: "", date_to: "", cadence: "monthly", use_case: "", segment: "", region: "" },
+  // Global dashboard filters (empty string = not applied; blank date_to -> backend "today").
+  // date_from defaults to a fixed floor that spans the full seed history (earliest
+  // specs ~Dec 2025) so the funnel opens on all 500 specs with no manual change.
+  // Fixed date (not 6M-from-today) keeps it deterministic + clock-independent.
+  // `preset` is UI-only (which date preset is highlighted; "" = custom/none) and
+  // is NOT sent to the backend by buildDashQuery. use_case/segment/region are
+  // multi-select arrays ([] = no filter on that dimension = all).
+  filters: { date_from: "2025-12-01", date_to: "", cadence: "monthly", use_case: [], segment: [], region: [], preset: "" },
+  openMs: null,   // key of the currently-open multi-select panel (UI-only)
 };
 let _id = 0;
 const nextId = () => `m${++_id}`;
@@ -185,11 +192,13 @@ function setTab(tab) {
     spec: ["#", "spec-channel", "Run <code>/spec</code> on a discovery transcript"],
     review: ["#", "spec-review", "Approvers review drafted specs"],
     deal: ["#", "deal-tracking", "Approved specs post their new opportunities here"],
-    dashboard: ["📊", "Dashboard", "Three-pillar analytics from the warehouse"],
+    dashboard: ["📊", "Dashboard", ""],
   }[tab];
   el("bar-hash").textContent = meta[0];
   el("bar-title").textContent = meta[1];
   el("bar-desc").innerHTML = meta[2];
+  // Hide the subtitle slot entirely when empty so its left border/padding doesn't linger.
+  el("bar-desc").style.display = meta[2] ? "" : "none";
 
   if (tab === "dashboard" && !state.dashboard) loadDashboard();
 }
@@ -546,9 +555,10 @@ function buildDashQuery() {
   if (f.date_from) p.set("date_from", f.date_from);
   if (f.date_to) p.set("date_to", f.date_to);
   if (f.cadence) p.set("cadence", f.cadence);
-  if (f.use_case) p.set("use_case", f.use_case);
-  if (f.segment) p.set("segment", f.segment);
-  if (f.region) p.set("region", f.region);
+  // multi-select: comma-joined; empty array -> param omitted (no filter = all)
+  if (f.use_case.length) p.set("use_case", f.use_case.join(","));
+  if (f.segment.length) p.set("segment", f.segment.join(","));
+  if (f.region.length) p.set("region", f.region.join(","));
   const s = p.toString();
   return s ? "?" + s : "";
 }
@@ -585,10 +595,10 @@ function renderDashboard() {
         <span class="fb-dash">→</span>
         <input type="date" id="f-to" value="${f.date_to}" />
         <div class="presets" id="f-presets">
-          <button data-preset="ytd">YTD</button>
-          <button data-preset="6m">6M</button>
-          <button data-preset="30d">30D</button>
-          <button data-preset="7d">7D</button>
+          <button data-preset="ytd" class="${f.preset === "ytd" ? "on" : ""}">YTD</button>
+          <button data-preset="6m" class="${f.preset === "6m" ? "on" : ""}">6M</button>
+          <button data-preset="30d" class="${f.preset === "30d" ? "on" : ""}">30D</button>
+          <button data-preset="7d" class="${f.preset === "7d" ? "on" : ""}">7D</button>
         </div>
       </div>
       <div class="fb-group">
@@ -601,14 +611,17 @@ function renderDashboard() {
       </div>
       <div class="fb-group">
         <span class="fb-label">Use case</span>
-        <select id="f-usecase">${optionList(fil.available_use_cases, f.use_case, "All use cases")}</select>
+        ${multiSelectHtml("use_case", fil.available_use_cases, f.use_case, "All use cases")}
       </div>
       <div class="fb-group">
         <span class="fb-label">Segment × Region</span>
-        <select id="f-segment">${optionList(fil.available_segments, f.segment, "All segments")}</select>
-        <select id="f-region">${optionList(fil.available_regions, f.region, "All regions")}</select>
+        ${multiSelectHtml("segment", fil.available_segments, f.segment, "All segments")}
+        ${multiSelectHtml("region", fil.available_regions, f.region, "All regions")}
       </div>
     </div>
+
+    <!-- SCORECARD ROW (from business_funnel) -->
+    ${scorecardsHtml(d.business_funnel)}
 
     <!-- SECTION 1 -->
     <div class="pillar">
@@ -621,20 +634,28 @@ function renderDashboard() {
       </div>
     </div>
 
-    <!-- SECTION 2 -->
+    <!-- SECTION 2: pipeline flow + stage velocity (SVG, no Chart.js) -->
     <div class="pillar">
       <div class="pillar-title"><h2>Spec → Opportunity</h2>
-        <span class="sub">stage funnel + average velocity (days) between stages</span></div>
-      <div class="card tall">
-        <div class="chart-wrap"><canvas id="c-funnel"></canvas></div>
-        <div class="velo-strip">${velocityStripHtml(s2)}</div>
+        <span class="sub">pipeline flow + stage velocity</span></div>
+      <div class="card">
+        <h3>Pipeline flow — deal journeys <span style="color:var(--ink-mute);font-weight:400">(dollar-weighted)</span></h3>
+        <div class="viz-wrap viz-sankey">${pipelineFlowSvg(d.pipeline_flow)}</div>
+      </div>
+      <div class="card velocity-block">
+        <div class="velocity-head">
+          <h3>Stage Velocity</h3>
+          <span class="velocity-sub">average days between stages</span>
+        </div>
+        ${velocityFlowHtml(s2)}
+        <div id="velocity-diagnostic" class="velocity-diag">Period-over-period diagnostic — coming next</div>
       </div>
     </div>
 
     <!-- SECTION 3 -->
     <div class="pillar">
       <div class="pillar-title"><h2>Opportunity → Closed Won</h2>
-        <span class="sub">pipeline, win type, deal size, revenue</span></div>
+        <span class="sub">pipeline, win type, revenue</span></div>
       <div class="cards c2">
         <div class="card tall"><h3>Pipeline value &amp; deal volume by segment</h3>
           <div class="chart-wrap"><canvas id="c-pipeline"></canvas></div></div>
@@ -644,10 +665,6 @@ function renderDashboard() {
       <div class="cards c2" style="margin-top:16px">
         <div class="card tall"><h3>Running ACV (cumulative contract value)</h3>
           <div class="chart-wrap"><canvas id="c-runacv"></canvas></div></div>
-        <div class="card"><h3>Avg deal size &amp; growth by segment</h3>
-          <div class="chart-wrap"><canvas id="c-dealsize"></canvas></div></div>
-      </div>
-      <div class="cards c2" style="margin-top:16px">
         <div class="card"><h3>Revenue per win type <span style="color:var(--ink-mute);font-weight:400">(avg ACV)</span></h3>
           <div class="chart-wrap" style="height:200px"><canvas id="c-revtype"></canvas></div>
           <div class="note">${escapeHtml(revNote)}</div></div>
@@ -666,8 +683,186 @@ function optionList(items, selected, allLabel) {
   return opts.join("");
 }
 
-function velocityStripHtml(s2) {
-  const stages = (s2 && s2.stages) || [];
+// --- multi-select dropdown (checkbox panel) ---------------------------------
+// A button styled like the filter-bar selects that opens a checkbox panel.
+// `selected` is the array from state.filters[key]; empty = "all" (allLabel).
+function msLabel(selected, allLabel) {
+  const sel = selected || [];
+  if (sel.length === 0) return allLabel;
+  if (sel.length === 1) return sel[0];
+  return `${sel.length} selected`;
+}
+
+function multiSelectHtml(key, items, selected, allLabel) {
+  const sel = selected || [];
+  const opts = (items || [])
+    .map((it) =>
+      `<label class="ms-opt"><input type="checkbox" value="${escapeAttr(it)}" ${sel.includes(it) ? "checked" : ""}/>` +
+      `<span>${escapeHtml(it)}</span></label>`
+    )
+    .join("");
+  return `<div class="ms" data-ms="${escapeAttr(key)}">
+      <button type="button" class="ms-toggle" data-all="${escapeAttr(allLabel)}">${escapeHtml(msLabel(sel, allLabel))} <span class="ms-caret">▾</span></button>
+      <div class="ms-panel" hidden>${opts}</div>
+    </div>`;
+}
+
+// --- scorecard tiles (from business_funnel) ---------------------------------
+// Each tile: { key, label, fmt, kind, title? }.
+//   kind "rel" -> delta shown as relative %  (count / $ metrics)
+//   kind "pp"  -> delta shown in percentage POINTS (rate metrics)
+function scorecardsHtml(bf) {
+  if (!bf) return "";
+  const num = (n) => (Number(n) || 0).toLocaleString();
+  const fmtPct = (r) => (r == null ? "—" : Math.round(r * 100) + "%");
+  const tiles = [
+    { key: "specs", label: "Total Specs", fmt: num, kind: "rel" },
+    { key: "opportunities", label: "Opportunities", fmt: num, kind: "rel" },
+    { key: "won", label: "Closed Won", fmt: num, kind: "rel" },
+    { key: "won_acv", label: "Won ACV", fmt: fmtMoney, kind: "rel" },
+    { key: "open_pipeline", label: "Open Pipeline", fmt: fmtMoney, kind: "rel" },
+    { key: "spec_to_opp_rate", label: "Spec→Opp Conv", fmt: fmtPct, kind: "pp" },
+    { key: "win_rate_all", label: "Win Rate", fmt: fmtPct, kind: "pp", title: "Won ÷ all opps (not win-among-closed)" },
+  ];
+  const prior = bf.prior || null;
+  return `<div class="scorecard-row">${tiles
+    .map((t) => {
+      const cur = bf[t.key];
+      const valHtml = `<div class="sc-v">${escapeHtml(t.fmt(cur))}</div>`;
+      const labelHtml = t.title
+        ? `<div class="sc-l" title="${escapeAttr(t.title)}">${escapeHtml(t.label)} <span class="sc-info">ⓘ</span></div>`
+        : `<div class="sc-l">${escapeHtml(t.label)}</div>`;
+      return `<div class="scorecard">${valHtml}${labelHtml}${deltaHtml(cur, prior ? prior[t.key] : undefined, t.kind)}</div>`;
+    })
+    .join("")}</div>`;
+}
+
+// MoM-style delta line. Hidden (empty string) when prior is absent or its value
+// is null/0 — never "▲∞%". "rel" = relative %; "pp" = percentage points.
+function deltaHtml(cur, prev, kind) {
+  if (prev == null || cur == null) return "";
+  let amount, suffix;
+  if (kind === "pp") {
+    amount = Math.round((cur - prev) * 100);           // points on a 0-1 rate
+    suffix = "pp";
+  } else {
+    if (!prev) return "";                               // prior 0 -> no relative %
+    amount = Math.round(((cur - prev) / prev) * 100);   // relative %
+    suffix = "%";
+  }
+  if (amount === 0) return `<div class="sc-d sc-flat">▬ 0${suffix} vs prior period</div>`;
+  const up = amount > 0;
+  const arrow = up ? "▲" : "▼";
+  const cls = up ? "sc-up" : "sc-down";
+  return `<div class="sc-d ${cls}">${arrow}${Math.abs(amount)}${suffix} vs prior period</div>`;
+}
+
+// --- pipeline FLOW Sankey (hand-rolled SVG; stage-to-stage transitions) -------
+// Left-to-right flow: nodes are stages in funnel-depth columns (Discovery,
+// Proposal, Negotiation, then a terminal column of Closed Won / Closed Lost).
+// Each transition is a curved band from its from-node to its to-node, thickness
+// ∝ $ amount (dollar-weighted). Bypass bands (Discovery→Negotiation) sweep past
+// the Proposal column; early-exit bands (Discovery→Closed Lost) run to the
+// terminal column — both read as "skips". Terminal-bound bands are colored by
+// destination (Won green, Lost grey); in-funnel advances use the navy→periwinkle
+// ramp. A per-transition legend (deals + $) renders beneath the SVG.
+function pipelineFlowSvg(flow) {
+  const transitions = (flow && flow.transitions) || [];
+  const openNow = (flow && flow.open_now) || [];
+  const STAGES = ["Discovery", "Proposal", "Negotiation", "Closed Won", "Closed Lost"];
+  const COLS = { "Discovery": 0, "Proposal": 1, "Negotiation": 2, "Closed Won": 3, "Closed Lost": 3 };
+  const RANK = {}; STAGES.forEach((s, i) => (RANK[s] = i));
+  const openMap = {}; openNow.forEach((o) => (openMap[o.stage] = o));
+
+  const totalAmt = transitions.reduce((a, t) => a + (t.amount || 0), 0);
+  if (!transitions.length || totalAmt <= 0) {
+    return `<svg class="viz-svg" viewBox="0 0 760 80" preserveAspectRatio="xMidYMid meet"><text x="380" y="44" text-anchor="middle" class="sk-empty">No deal transitions in range</text></svg>`;
+  }
+
+  const inflow = {}, outflow = {}, inDeals = {};
+  STAGES.forEach((s) => { inflow[s] = 0; outflow[s] = 0; inDeals[s] = 0; });
+  transitions.forEach((t) => {
+    outflow[t.from] += t.amount || 0;
+    inflow[t.to] += t.amount || 0;
+    inDeals[t.to] += t.deals || 0;
+  });
+  const openAmt = (s) => (openMap[s] ? openMap[s].amount || 0 : 0);
+  // node $ value: Discovery (source) = outflow + still-open; others balance to inflow
+  const nodeVal = {};
+  STAGES.forEach((s) => { nodeVal[s] = s === "Discovery" ? outflow[s] + openAmt(s) : inflow[s]; });
+
+  // geometry
+  const W = 760, padTop = 30, padBot = 12, nodeW = 13, availH = 300, GAPN = 16;
+  const f1 = (n) => n.toFixed(1);
+  const colX = [70, 290, 470, 650];
+  const colNodes = [[], [], [], []];
+  STAGES.forEach((s) => colNodes[COLS[s]].push(s));
+  const colTotal = colNodes.map((list) => list.reduce((a, s) => a + nodeVal[s], 0));
+  const maxNodes = Math.max(...colNodes.map((l) => l.length));
+  const scale = (availH - (maxNodes - 1) * GAPN) / Math.max(...colTotal, 1);
+  const H = padTop + availH + padBot;
+
+  // place nodes (centered vertical stack per column)
+  const nodes = {};
+  colNodes.forEach((list, c) => {
+    const stackH = list.reduce((a, s) => a + Math.max(3, nodeVal[s] * scale), 0) + (list.length - 1) * GAPN;
+    let y = padTop + (availH - stackH) / 2;
+    list.forEach((s) => {
+      const h = Math.max(3, nodeVal[s] * scale);
+      nodes[s] = { x: colX[c], y, h, c };
+      y += h + GAPN;
+    });
+  });
+
+  // band port allocation: out-ports stack top-down by funnel order (already sorted
+  // by the backend); in-ports stack by (to-rank, from-rank). Mutating shared objs.
+  const bands = transitions.map((t) => ({ ...t, h: Math.max(2, (t.amount || 0) * scale) }));
+  const outCur = {}, inCur = {};
+  STAGES.forEach((s) => { outCur[s] = nodes[s].y; inCur[s] = nodes[s].y; });
+  bands.forEach((b) => { b.sy0 = outCur[b.from]; outCur[b.from] += b.h; });
+  [...bands].sort((a, b) => (RANK[a.to] - RANK[b.to]) || (RANK[a.from] - RANK[b.from]))
+    .forEach((b) => { b.ty0 = inCur[b.to]; inCur[b.to] += b.h; });
+
+  const nodeColor = { "Discovery": C.navy, "Proposal": C.periDim, "Negotiation": C.peri, "Closed Won": C.green, "Closed Lost": C.lost };
+  const bandColor = (t) => t.to === "Closed Won" ? C.green : t.to === "Closed Lost" ? C.lost : (nodeColor[t.from] || C.peri);
+
+  let svg = `<svg class="viz-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Pipeline deal-journey flow, dollar-weighted">`;
+  // bands first (under nodes)
+  bands.forEach((b) => {
+    const x0 = nodes[b.from].x + nodeW, x1 = nodes[b.to].x, xm = (x0 + x1) / 2;
+    const d =
+      `M ${x0} ${f1(b.sy0)} C ${xm} ${f1(b.sy0)}, ${xm} ${f1(b.ty0)}, ${x1} ${f1(b.ty0)} ` +
+      `L ${x1} ${f1(b.ty0 + b.h)} C ${xm} ${f1(b.ty0 + b.h)}, ${xm} ${f1(b.sy0 + b.h)}, ${x0} ${f1(b.sy0 + b.h)} Z`;
+    svg += `<path d="${d}" fill="${bandColor(b)}" opacity="0.42" />`;
+  });
+  // nodes + labels
+  STAGES.forEach((s) => {
+    const n = nodes[s];
+    svg += `<rect x="${n.x}" y="${f1(n.y)}" width="${nodeW}" height="${f1(n.h)}" rx="2" fill="${nodeColor[s]}" />`;
+    const open = openMap[s];
+    if (n.c < 3) {
+      // funnel node: name above, "(N open)" line beneath the name
+      svg += `<text x="${n.x + nodeW / 2}" y="${f1(n.y - 14)}" text-anchor="middle" class="fl-node">${escapeHtml(s)}</text>`;
+      if (open) svg += `<text x="${n.x + nodeW / 2}" y="${f1(n.y - 3)}" text-anchor="middle" class="fl-open">${open.deals} open · ${fmtMoney(open.amount)}</text>`;
+    } else {
+      // terminal node: label to the right (stage + total deals in)
+      svg += `<text x="${n.x + nodeW + 8}" y="${f1(n.y + n.h / 2 + 4)}" class="fl-node">${escapeHtml(s)} · ${inDeals[s]} · ${fmtMoney(inflow[s])}</text>`;
+    }
+  });
+  svg += `</svg>`;
+
+  // legend: one row per transition (deals + $), colored swatch keyed to the band.
+  const legend = `<div class="flow-legend">${transitions.map((t) =>
+    `<div class="fl-item"><span class="fl-swatch" style="background:${bandColor(t)}"></span>` +
+    `<span class="fl-route">${escapeHtml(t.from)} → ${escapeHtml(t.to)}</span>` +
+    `<span class="fl-stat">${t.deals} · ${fmtMoney(t.amount)}</span></div>`).join("")}</div>`;
+  return svg + legend;
+}
+
+// Prominent stage-velocity step-flow. SAME data + values as before (velocity_days
+// avg_days between consecutive stages); only the rendering is promoted from tiny
+// grey text to a titled chip/connector flow.
+function velocityFlowHtml(s2) {
   const velo = (s2 && s2.velocity_days) || [];
   // Discovery →(Xd)→ Proposal →(Yd)→ Negotiation →(Zd)→ Closed
   const order = ["Discovery", "Proposal", "Negotiation", "Closed"];
@@ -675,19 +870,21 @@ function velocityStripHtml(s2) {
   velo.forEach((v) => { vmap[v.from] = v.avg_days; });
   const parts = [];
   order.forEach((st, i) => {
-    parts.push(`<span class="velo-stage">${st}</span>`);
+    parts.push(`<span class="vf-chip">${escapeHtml(st)}</span>`);
     if (i < order.length - 1) {
       const days = vmap[st];
-      parts.push(`<span class="velo-gap">→ <b>${days == null ? "—" : days + "d"}</b> →</span>`);
+      parts.push(`<span class="vf-conn"><span class="vf-days">${days == null ? "—" : days + "d"}</span></span>`);
     }
   });
-  return parts.join(" ");
+  return `<div class="velocity-flow">${parts.join("")}</div>`;
 }
 
 function attachDashFilters() {
   el("dash-refresh").addEventListener("click", () => { state.dashboard = null; loadDashboard(); });
-  el("f-from").addEventListener("change", (e) => { state.filters.date_from = e.target.value; loadDashboard(); });
-  el("f-to").addEventListener("change", (e) => { state.filters.date_to = e.target.value; loadDashboard(); });
+  // Manually editing either date input means the range no longer matches a
+  // preset, so clear the active-preset highlight.
+  el("f-from").addEventListener("change", (e) => { state.filters.date_from = e.target.value; state.filters.preset = ""; loadDashboard(); });
+  el("f-to").addEventListener("change", (e) => { state.filters.date_to = e.target.value; state.filters.preset = ""; loadDashboard(); });
   el("f-presets").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-preset]");
     if (b) applyPreset(b.dataset.preset);
@@ -696,9 +893,38 @@ function attachDashFilters() {
     const b = e.target.closest("button[data-cad]");
     if (b) { state.filters.cadence = b.dataset.cad; loadDashboard(); }
   });
-  el("f-usecase").addEventListener("change", (e) => { state.filters.use_case = e.target.value; loadDashboard(); });
-  el("f-segment").addEventListener("change", (e) => { state.filters.segment = e.target.value; loadDashboard(); });
-  el("f-region").addEventListener("change", (e) => { state.filters.region = e.target.value; loadDashboard(); });
+  // multi-select dropdowns (use_case / segment / region)
+  document.querySelectorAll(".ms").forEach((ms) => wireMultiSelect(ms));
+  // re-open a panel that was open before the re-render (each checkbox change
+  // re-renders the dashboard; this keeps the panel open for further selection)
+  if (state.openMs) {
+    const panel = document.querySelector(`.ms[data-ms="${state.openMs}"] .ms-panel`);
+    if (panel) panel.hidden = false;
+  }
+}
+
+function closeAllMsPanels() {
+  document.querySelectorAll(".ms-panel").forEach((p) => { p.hidden = true; });
+}
+
+function wireMultiSelect(ms) {
+  const key = ms.dataset.ms;
+  const toggle = ms.querySelector(".ms-toggle");
+  const panel = ms.querySelector(".ms-panel");
+  toggle.addEventListener("click", (e) => {
+    e.stopPropagation();   // don't let the document outside-click handler see this
+    if (state.openMs === key) { state.openMs = null; panel.hidden = true; }
+    else { closeAllMsPanels(); state.openMs = key; panel.hidden = false; }
+  });
+  panel.addEventListener("change", (e) => {
+    const cb = e.target;
+    if (!cb.matches || !cb.matches('input[type="checkbox"]')) return;
+    const arr = state.filters[key];   // array; "" -> all
+    if (cb.checked) { if (!arr.includes(cb.value)) arr.push(cb.value); }
+    else { const i = arr.indexOf(cb.value); if (i >= 0) arr.splice(i, 1); }
+    state.openMs = key;   // keep this panel open across the re-render
+    loadDashboard();      // apply immediately (consistent with the other filters)
+  });
 }
 
 function applyPreset(p) {
@@ -712,6 +938,7 @@ function applyPreset(p) {
   else { const d = new Date(today); d.setDate(d.getDate() - 7); from = isoD(d); }
   state.filters.date_from = from;
   state.filters.date_to = to;
+  state.filters.preset = p;   // highlight the chosen preset (UI-only)
   loadDashboard();
 }
 
@@ -736,7 +963,6 @@ function drawCharts(d) {
   Chart.defaults.color = "#3A4150";
 
   const s1 = d.spec_generation;
-  const s2 = d.spec_to_opportunity;
   const s3 = d.opportunity_to_won;
   const wtLabels = d.win_type_labels || {};
   const wtKeys = Object.keys(wtLabels);
@@ -745,27 +971,14 @@ function drawCharts(d) {
   const statusColor = { draft: C.slate, in_review: C.peri, approved: C.green, rejected: C.red };
   lineChart("c-spec-status", s1.spec_volume_by_status, (k) => statusColor[k] || C.peri);
   lineChart("c-rej-reason", s1.rejection_volume_by_reason, (k, i) => seriesColor(i));
-  lineChart("c-appr-uc", s1.approval_volume_by_use_case, (k, i) => seriesColor(i));
+  // Approval-by-use-case has 15+ series -> keep top 5 by total volume, collapse the
+  // rest into a muted-grey "Other". Frontend-only; backend response unchanged.
+  const apprUc = topNSeries(s1.approval_volume_by_use_case, 5, "Other");
+  lineChart("c-appr-uc", apprUc, (k, i) => (k === "Other" ? C.mute : seriesColor(i)));
 
-  // SECTION 2 — stage funnel (volume); velocity numbers are the HTML strip beneath.
-  const stages = s2.stages || [];
-  state.charts.funnel = new Chart(el("c-funnel"), {
-    type: "bar",
-    data: {
-      labels: stages.map((x) => x.stage),
-      datasets: [{
-        data: stages.map((x) => x.volume),
-        backgroundColor: [C.navyMid, C.periDim, C.peri, C.green, C.lost],
-        borderRadius: 6,
-      }],
-    },
-    options: {
-      indexAxis: "y", maintainAspectRatio: false,
-      plugins: { legend: { display: false },
-        tooltip: { callbacks: { label: (ctx) => `${ctx.raw} opps entered ${stages[ctx.dataIndex].stage}` } } },
-      scales: { x: { beginAtZero: true, ticks: { precision: 0 } } },
-    },
-  });
+  // SECTION 2 — funnel + Sankey + velocity are now hand-rolled SVG/HTML rendered
+  // in renderDashboard's template (no Chart.js instance here). The old c-funnel
+  // bar chart was removed, so nothing is tracked in state.charts for it.
 
   // SECTION 3a — pipeline value (bars) + deal volume (line) by segment (KEPT).
   const seg = s3.pipeline_value_and_volume_by_segment || {};
@@ -831,34 +1044,7 @@ function drawCharts(d) {
     },
   });
 
-  // SECTION 3d — avg deal size (bars) + growth (line) by segment.
-  const ad = s3.avg_deal_size_and_growth_by_segment || {};
-  const adLabels = Object.keys(ad);
-  state.charts.dealsize = new Chart(el("c-dealsize"), {
-    type: "bar",
-    data: {
-      labels: adLabels,
-      datasets: [
-        { type: "bar", label: "Avg ACV", yAxisID: "y",
-          data: adLabels.map((s) => ad[s].avg_acv), backgroundColor: C.peri, borderRadius: 6 },
-        { type: "line", label: "Growth %", yAxisID: "y1",
-          data: adLabels.map((s) => (ad[s].growth == null ? null : Math.round(ad[s].growth * 100))),
-          borderColor: C.ink, backgroundColor: C.ink, tension: 0.3, borderWidth: 2, pointRadius: 4, spanGaps: true },
-      ],
-    },
-    options: {
-      maintainAspectRatio: false,
-      plugins: { legend: { position: "bottom" },
-        tooltip: { callbacks: { label: (ctx) =>
-          ctx.dataset.label === "Avg ACV" ? `Avg ACV: ${fmtMoney(ctx.raw)}` : `Growth: ${ctx.raw == null ? "—" : ctx.raw + "%"}` } } },
-      scales: {
-        y: { position: "left", beginAtZero: true, ticks: { callback: (v) => fmtMoney(v) } },
-        y1: { position: "right", grid: { drawOnChartArea: false }, ticks: { callback: (v) => v + "%" } },
-      },
-    },
-  });
-
-  // SECTION 3e — revenue per win type (avg ACV — the efficiency story).
+  // SECTION 3d — revenue per win type (avg ACV — the efficiency story).
   const rev = (s3.revenue_per_win_type || {}).by_type || {};
   state.charts.revtype = new Chart(el("c-revtype"), {
     type: "bar",
@@ -874,6 +1060,31 @@ function drawCharts(d) {
       scales: { y: { beginAtZero: true, ticks: { callback: (v) => fmtMoney(v) } } },
     },
   });
+}
+
+// Keep the top-N series (by total volume across all periods) and collapse the
+// rest into one `otherLabel` series (per-period sum of the dropped keys). Returns
+// the same {keys, data} shape lineChart expects. No-op when keys.length <= n.
+function topNSeries(series, n, otherLabel) {
+  const keys = (series && series.keys) || [];
+  const data = (series && series.data) || [];
+  if (keys.length <= n) return series;
+  const totals = keys
+    .map((k) => ({ k, total: data.reduce((s, r) => s + (r[k] || 0), 0) }))
+    .sort((a, b) => b.total - a.total);
+  const top = totals.slice(0, n).map((x) => x.k);
+  const topSet = new Set(top);
+  const newData = data.map((r) => {
+    const row = { period: r.period };
+    let other = 0;
+    for (const k of keys) {
+      if (topSet.has(k)) row[k] = r[k] || 0;
+      else other += r[k] || 0;
+    }
+    row[otherLabel] = other;
+    return row;
+  });
+  return { keys: [...top, otherLabel], data: newData };
 }
 
 // Generic time-series LINE chart for Section 1 ({keys, data:[{period, k:v}]}).
@@ -930,6 +1141,14 @@ function init() {
     el(id).addEventListener("click", onChannelClick));
   // live char counter for the regenerate composer (review channel)
   el("review-list").addEventListener("input", onReviewInput);
+  // close any open multi-select panel on an outside click (added once; the
+  // panels' selections are already applied live, so no reload is needed here)
+  document.addEventListener("click", (e) => {
+    if (!state.openMs) return;
+    if (e.target.closest && e.target.closest(".ms")) return;
+    state.openMs = null;
+    closeAllMsPanels();
+  });
 
   initComposer();
   renderSpec();
