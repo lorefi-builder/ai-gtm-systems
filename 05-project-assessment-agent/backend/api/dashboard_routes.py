@@ -678,6 +678,10 @@ def _section_demand_intelligence(specs: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     Specs already carry a `segment` (and `region`) from the dim_account join, so
     a spec lands in the (domain, segment) heatmap cell of its account.
+
+    NOTE: the dollar figures here are computed from a synthetic, deterministic seed
+    (fixed RNG) and are illustrative of the MECHANISM — how capability gaps and
+    declined demand would be dollar-weighted — not a measurement of any real market.
     """
     def ev(s: Dict[str, Any]) -> float:
         return float(s.get("estimated_value") or 0.0)

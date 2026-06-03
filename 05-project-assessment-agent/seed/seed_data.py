@@ -836,6 +836,83 @@ def build_lifecycle(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
+# --- named-sample fixtures (block-5 EDIT 4) ----------------------------------
+# A hand-pinned returning-account fixture the demo leans on, built with FIXED
+# UUIDs and literal values (NOT the main `rng`/`_est_rng` streams), so it is
+# byte-stable across reseeds AND never perturbs the protected organic counts
+# (500 specs / 274 opps / 74 won / the DI cohort):
+#
+#   EDIT 4  Prior-spec history (2 approved + 1 rejected) on the EXISTING account
+#           behind sample_transcript_01 (Meridian Synth), so running that
+#           transcript demonstrates returning-account + prior-project enrichment.
+#
+# NOTE: sample_transcript_04_ambiguous is intentionally NOT seeded here — it is
+# assessed live (the point of that demo is to isolate the low-confidence dial),
+# and a pre-seeded fixture would collide with the live run and surface a spurious
+# "returning account" line.
+
+# Meridian Synth (sample_transcript_01) prior history. Tuples:
+# (spec_id, lifecycle_id, transcript_id, task_type, color, status, confidence,
+#  rejection_reason, age_days, approved_age_days). The rejected row carries a
+# real rejection_reason so the returning-account line shows "last rejected for: …".
+_MERIDIAN_HISTORY: list[tuple] = [
+    ("0a4b0001-0001-4001-8001-000000000001", "0a4b0001-0001-4001-8001-000000000101",
+     "txn_meridian_hist_01", "Content Gen", "green", "approved", 0.91, None, 150, 138),
+    ("0a4b0001-0001-4001-8001-000000000002", "0a4b0001-0001-4001-8001-000000000102",
+     "txn_meridian_hist_02", "Model Eval", "green", "approved", 0.88, None, 96, 84),
+    ("0a4b0001-0001-4001-8001-000000000003", "0a4b0001-0001-4001-8001-000000000103",
+     "txn_meridian_hist_03", "Data Labeling", "green", "rejected", 0.79,
+     "missing_acceptance_criteria", 60, None),
+]
+
+
+def build_returning_history(account: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """EDIT 4: prior fct_spec + spine rows on an EXISTING account so it reads as a
+    returning account with project history (2 approved + 1 rejected)."""
+    specs: list[dict[str, Any]] = []
+    lifecycle: list[dict[str, Any]] = []
+    for (spec_id, lc_id, txn, task_type, color, status, conf, reason, age, appr_age) in _MERIDIAN_HISTORY:
+        created = cap_now(NOW - dt.timedelta(days=age))
+        approved_at = (
+            iso(cap_now(NOW - dt.timedelta(days=appr_age))) if status == "approved" else None
+        )
+        specs.append(
+            {
+                "spec_id": spec_id,
+                "transcript_id": txn,
+                "account_id": account["account_id"],
+                "domain": account["domain"],
+                "task_type": task_type,
+                "matrix_color": color,
+                "escalation_flags": [],
+                "confidence": conf,
+                "ec_count": 7,
+                "tdm_count": 1,
+                "dops_count": 1,
+                "fde_count": 1,
+                "resource_flags": resource_flags(account["domain"], color, []),
+                "status": status,
+                "rejection_reason": reason,
+                "opportunity_id": None,
+                "estimated_value": 95000.0,
+                "created_at": iso(created),
+                "approved_at": approved_at,
+            }
+        )
+        lifecycle.append(
+            {
+                "lifecycle_id": lc_id,
+                "transcript_id": txn,
+                "spec_id": spec_id,
+                "opportunity_id": None,
+                "account_id": account["account_id"],
+                "project_id": None,
+                "created_at": iso(created),
+            }
+        )
+    return {"specs": specs, "lifecycle": lifecycle}
+
+
 # --- insertion ---------------------------------------------------------------
 # Tables this seed OWNS, in FK-safe delete order (children first). We do NOT
 # clear dim_capability_matrix / escalation_rules — those are upserted reference
@@ -896,6 +973,11 @@ def main() -> None:
     # closed_at to its terminal stage entry, mutating the opp before insert).
     stage_history = build_stage_history(opportunities)
 
+    # Named-sample fixture (block-5 EDIT 4). Built AFTER the organic dataset with
+    # FIXED UUIDs / literal values, so it never perturbs the counts above.
+    meridian = next(a for a in accounts if a["account_name"] == "Meridian Synth")
+    returning = build_returning_history(meridian)
+
     approved = sum(1 for s in specs if s["status"] == "approved")
     closed_won = sum(1 for o in opportunities if o["stage"] == "Closed Won")
     print(
@@ -927,6 +1009,10 @@ def main() -> None:
 
     print("Inserting fct_spec ...")
     insert_in_batches("fct_spec", strip_private(specs))
+    # Named-sample fixture (inserted separately: its column set differs from the
+    # organic rows, and PostgREST bulk insert wants homogeneous rows per request).
+    print("Inserting fct_spec named-sample fixture (EDIT 4) ...")
+    insert("fct_spec", returning["specs"])      # EDIT 4: Meridian Synth prior history
 
     print("Inserting fct_opportunity ...")
     insert_in_batches("fct_opportunity", opportunities)
@@ -936,6 +1022,8 @@ def main() -> None:
 
     print("Inserting spec_lifecycle ...")
     insert_in_batches("spec_lifecycle", lifecycle)
+    # Spine rows for the named-sample fixture (EDIT 4).
+    insert("spec_lifecycle", returning["lifecycle"])
 
     print("Done. stg_transcript_extracts is left empty (populated at runtime).")
 

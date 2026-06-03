@@ -7,15 +7,23 @@ Two entry points:
 complete_json strips ``` fences, json.loads, and retries ONCE with a corrective
 nudge before raising a clean error. Plus a tiny prompt loader so the prompt
 templates in prompts/*.md stay inspectable and are rendered at runtime.
+
+RELIABILITY LAYER (DESIGN.md §4): the SDK client is built with max_retries, and
+complete_text() additionally wraps messages.create in an explicit 429/529 retry
+loop (exponential backoff + jitter) so transient rate-limit/overload responses
+don't fail a whole pipeline run.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import random
 import re
+import time
 from typing import Any, Dict, Optional
 
+import anthropic
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
@@ -36,7 +44,9 @@ def _get_client() -> Anthropic:
             raise RuntimeError(
                 "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and fill it in."
             )
-        _client = Anthropic(api_key=api_key)
+        # max_retries: the SDK's own transient-error backoff (defense in depth
+        # beneath the explicit 429/529 loop in complete_text). DESIGN.md §4.
+        _client = Anthropic(api_key=api_key, max_retries=4)
     return _client
 
 
@@ -55,14 +65,39 @@ def complete_text(
     temp: float,
     max_tokens: int = MAX_OUTPUT_TOKENS,
 ) -> str:
-    """Single-turn completion. Returns the concatenated text blocks."""
-    response = _get_client().messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=max_tokens,
-        temperature=temp,
-        system=system,
-        messages=[{"role": "user", "content": user}],
-    )
+    """Single-turn completion. Returns the concatenated text blocks.
+
+    Reliability layer (DESIGN.md §4): retry the call on 429 (rate limit) and 529
+    (overloaded) up to 4 times with exponential backoff + jitter, then re-raise as
+    a clean RuntimeError. Other API errors propagate immediately. This sits on top
+    of the SDK's own max_retries for defense in depth.
+    """
+    client = _get_client()
+    max_attempts = 4
+    response = None
+    for attempt in range(max_attempts):
+        try:
+            response = client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=max_tokens,
+                temperature=temp,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+            break
+        except (anthropic.RateLimitError, anthropic.APIStatusError) as exc:
+            status = getattr(exc, "status_code", None)
+            # Only retry transient rate-limit / overload; re-raise everything else.
+            if not (isinstance(exc, anthropic.RateLimitError) or status in (429, 529)):
+                raise
+            if attempt == max_attempts - 1:
+                raise RuntimeError(
+                    f"Anthropic API rate-limited/overloaded (status {status}) and "
+                    f"still failing after {max_attempts} attempts; giving up."
+                ) from exc
+            # Exponential backoff with jitter, capped at 20s.
+            time.sleep(min(2 ** attempt + random.random(), 20))
+
     parts = [block.text for block in response.content if getattr(block, "type", "") == "text"]
     return "".join(parts).strip()
 

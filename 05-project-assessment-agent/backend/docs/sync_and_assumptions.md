@@ -59,9 +59,13 @@ stand-in is commented in code with the production mechanism it replaces:
 
 ## FLAGGED ASSUMPTIONS (confirm with the team)
 
-1. **Opp created ON APPROVAL**, not at discovery. If Snorkel/CRM practice creates
-   the opportunity at disco instead, `/approve` becomes *link-and-advance* rather
-   than *create*. (Confirming.)
+1. **Opportunity timing — DEFAULT:** the opportunity is materialized on spec
+   **APPROVAL** and enters at the **Discovery** stage (the pipeline's first stage;
+   "Discovery" is a *stage label*, not the record's creation time). **CONTINGENCY:**
+   if the customer's CRM creates opportunities at the discovery call instead,
+   `/approve` becomes *link-and-advance* (look up the existing Discovery-stage opp
+   and attach the spec) rather than *create* — a one-line config flag, not a
+   redesign.
 2. **Reverse ETL (warehouse → SF)** is event-driven / near-real-time on approval;
    **ETL (SF → warehouse)** is scheduled batch ~every 4–6h (business-hours +
    nightly reconcile).

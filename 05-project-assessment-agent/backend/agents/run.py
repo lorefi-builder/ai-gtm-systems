@@ -23,6 +23,7 @@ from db.client import insert
 from agents.classify import classify
 from agents.dedup import check_duplicate
 from agents.draft import draft_spec
+from agents.edge_cases import detect_edge_cases
 from agents.estimate import run_estimate
 from agents.extract import extract
 from agents.format_slack import format_summary
@@ -48,6 +49,7 @@ def run_pipeline(transcript_path: str) -> int:
 
         print("[3/6] classifying (hybrid: LLM + matrix + escalation)...")
         classification = classify(extraction, transcript_text)
+        edge_cases = detect_edge_cases(extraction, classification)  # advisory only
 
         print("[4/6] estimating resources (verified facts + analogs)...")
         estimate = run_estimate(classification, extraction)
@@ -63,7 +65,9 @@ def run_pipeline(transcript_path: str) -> int:
         return 1
 
     # --- output: Slack summary, then the draft spec --------------------------
-    summary = format_summary(extraction, classification, estimate, dedup, spec_id)
+    summary = format_summary(
+        extraction, classification, estimate, dedup, spec_id, edge_cases
+    )
     print("\n" + "=" * 72)
     print("SLACK SUMMARY")
     print("=" * 72)

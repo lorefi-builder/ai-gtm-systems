@@ -145,6 +145,22 @@ class ResourceEstimate(BaseModel):
     verified: VerifiedAccountFacts
 
 
+# --- advisory edge-case rubric ----------------------------------------------
+class EdgeCaseFlag(BaseModel):
+    """One ADVISORY edge-case hint surfaced in the Slack summary.
+
+    Purely a reviewer nudge: a detector that fires here NEVER sets
+    needs_human_review and NEVER changes the verdict (matrix color, escalation
+    flags, and the review hook are all decided in classify.py). See edge_cases.py.
+    ``tier`` orders the hints (1 = most structural).
+    """
+
+    code: str
+    tier: int
+    label: str
+    suggestion: str
+
+
 # --- dedup -------------------------------------------------------------------
 class DedupResult(BaseModel):
     """Non-blocking duplicate check; surfaced in the summary for a human."""

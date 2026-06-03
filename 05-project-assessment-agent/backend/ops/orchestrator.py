@@ -21,6 +21,7 @@ from db.client import insert, select
 
 from agents.classify import classify
 from agents.dedup import check_duplicate
+from agents.edge_cases import detect_edge_cases
 from agents.draft import _SYSTEM as _DRAFT_SYSTEM
 from agents.draft import _format_examples, draft_spec
 from agents.estimate import run_estimate
@@ -141,6 +142,7 @@ def _assess_and_write(
 ) -> Dict[str, Any]:
     """classify -> estimate -> draft -> write fct_spec(draft). Returns result dict."""
     classification = classify(extraction, transcript_text)
+    edge_cases = detect_edge_cases(extraction, classification)  # advisory only
     estimate = run_estimate(classification, extraction)
     draft = draft_spec(extraction, classification, estimate)
 
@@ -166,7 +168,9 @@ def _assess_and_write(
     }
     insert("fct_spec", fct_spec_row)
 
-    summary_text = format_summary(extraction, classification, estimate, dedup, spec_id)
+    summary_text = format_summary(
+        extraction, classification, estimate, dedup, spec_id, edge_cases
+    )
     return {
         "status": "draft_created",
         "spec_id": spec_id,
@@ -266,6 +270,7 @@ def regenerate_spec(
     # dedup against; regeneration is an explicit human-initiated retry.
     extraction = extract(transcript_text, raw_transcript_ref=transcript_text)
     classification = classify(extraction, transcript_text)
+    edge_cases = detect_edge_cases(extraction, classification)  # advisory only
     estimate = run_estimate(classification, extraction)
     draft = _draft_with_correction(
         extraction, classification, estimate, rejection_reason, correction_context
@@ -313,7 +318,9 @@ def regenerate_spec(
         match_spec_id=None,
         reason="regeneration — dedup intentionally skipped",
     )
-    summary_text = format_summary(extraction, classification, estimate, dedup, new_spec_id)
+    summary_text = format_summary(
+        extraction, classification, estimate, dedup, new_spec_id, edge_cases
+    )
     return {
         "status": "draft_created",
         "spec_id": new_spec_id,
