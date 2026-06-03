@@ -307,6 +307,15 @@ details.draft[open] > summary { border-bottom: 1px solid var(--pane-line); }
   background: var(--pane); border: 1px solid var(--pane-line); border-radius: 14px;
   padding: 12px 16px; margin: 14px 0 4px;
 }
+/* STATIC REPLAY: filter controls visibly disabled (snapshot), but the explainer
+   note stays full-opacity + readable. Only applies when .static-locked is set. */
+.filter-bar.static-locked .fb-group { opacity: 0.5; pointer-events: none; user-select: none; }
+.fb-static-note {
+  flex: 1 1 100%; font-size: 12px; color: var(--ink-mute); font-style: italic;
+  margin-top: 2px;
+}
+.refresh-btn:disabled { opacity: 0.45; cursor: default; }
+.refresh-btn:disabled:hover { background: #fff; color: var(--periwinkle-dim); }
 .fb-group { display: flex; align-items: center; gap: 8px; }
 .fb-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-mute); }
 .fb-dash { color: var(--ink-mute); }
@@ -442,4 +451,78 @@ details.draft[open] > summary { border-bottom: 1px solid var(--pane-line); }
 }
 @media (max-width: 560px) {
   .scorecard-row { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ===================== Demand Intelligence (DI) tab ===================== */
+/* Red = capability gap (semantic; distinct from the blue operational dashboard).
+   Anchored to the app's brand red family — NOT ad-hoc burgundy — so DI red reads
+   as brand palette: --di-mid is the canonical brand red (var(--red) #E01E5A) and
+   --di-deep its darker sibling (var(--slack-red-d) #c2194e), which is also where
+   the heatColor() ramp + legend gradient terminate (rgb(194,25,78)). */
+:root { --di-deep: var(--slack-red-d); --di-mid: var(--red); }
+
+/* --- hero row (3 prominent tiles) --- */
+.di-hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 16px 0 6px; }
+.di-hero-tile {
+  background: var(--pane); border: 1px solid var(--pane-line); border-radius: 14px;
+  padding: 18px 20px; box-shadow: 0 1px 2px rgba(19,23,34,0.05);
+  border-left: 4px solid var(--periwinkle-dim);
+}
+.di-hero-tile.di-gap { border-left-color: var(--di-deep); }
+.di-hero-tile.di-dec { border-left-color: var(--di-mid); }
+.di-hero-tile.di-top { border-left-color: var(--di-deep); }
+.di-hero-tile .dh-v {
+  font-family: var(--display); font-weight: 800; font-size: 30px; line-height: 1.05;
+  letter-spacing: -0.02em; color: var(--ink);
+}
+.di-hero-tile.di-gap .dh-v { color: var(--di-deep); }
+.di-hero-tile.di-dec .dh-v { color: var(--di-mid); }
+.di-hero-tile .dh-l { font-size: 12.5px; font-weight: 700; color: var(--ink-soft); margin-top: 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+.di-hero-tile .dh-sub { font-size: 12px; color: var(--ink-mute); margin-top: 4px; }
+
+/* --- heatmap (the hero visual) --- */
+.heatmap { display: grid; gap: 4px; }
+.hm-corner { font-size: 11px; color: var(--ink-mute); font-weight: 600; display: flex; align-items: flex-end; padding: 4px 6px; }
+.hm-colhead { font-size: 12.5px; font-weight: 700; color: var(--ink-soft); text-align: center; padding: 6px 4px; }
+.hm-rowhead { font-size: 13px; font-weight: 700; color: var(--ink); display: flex; align-items: center; padding: 4px 8px 4px 2px; }
+.hm-cell {
+  min-height: 58px; border-radius: 8px; padding: 8px 10px;
+  display: flex; flex-direction: column; justify-content: center; gap: 2px;
+}
+.hm-cell .hm-val { font-family: var(--display); font-weight: 800; font-size: 17px; letter-spacing: -0.01em; }
+.hm-cell .hm-det { font-size: 10.5px; opacity: 0.9; font-family: var(--mono); }
+.hm-cell.hm-empty {
+  background: var(--cream-warm); color: var(--ink-mute);
+  align-items: center; font-size: 15px; min-height: 58px; justify-content: center;
+}
+.hm-legend { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.hm-legend-bar { width: 180px; height: 12px; border-radius: 6px; border: 1px solid var(--pane-line);
+  background: linear-gradient(90deg, rgb(251,233,226), rgb(194,25,78)); }
+.hm-legend-lbl { font-size: 11.5px; font-family: var(--mono); color: var(--ink-mute); }
+.hm-legend-note { font-size: 11.5px; color: var(--ink-mute); font-style: italic; margin-left: 6px; }
+
+/* --- by-reason horizontal bars --- */
+.di-bars { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.di-bar-row { display: grid; grid-template-columns: 130px 1fr auto; align-items: center; gap: 10px; }
+.di-bar-lbl { font-size: 12.5px; color: var(--ink-soft); font-weight: 600; text-transform: capitalize; }
+.di-bar-track { height: 16px; background: var(--cream-warm); border-radius: 8px; overflow: hidden; }
+.di-bar-fill { height: 100%; background: var(--di-mid); border-radius: 8px; }
+.di-bar-val { font-size: 12px; font-family: var(--mono); color: var(--ink-mute); white-space: nowrap; }
+
+/* --- gap vs declined by domain --- */
+.di-dom { display: flex; flex-direction: column; gap: 9px; margin-top: 6px; }
+.di-dom-legend { font-size: 11.5px; color: var(--ink-mute); display: flex; align-items: center; gap: 4px; margin-bottom: 2px; }
+.dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.dot-gap { background: var(--di-deep); }
+.dot-dec { background: var(--di-mid); opacity: 0.55; }
+.di-dom-row { display: grid; grid-template-columns: 120px 1fr auto; align-items: center; gap: 10px; }
+.di-dom-lbl { font-size: 12.5px; color: var(--ink); font-weight: 600; }
+.di-dom-bars { display: flex; flex-direction: column; gap: 3px; }
+.di-dom-bar { height: 9px; border-radius: 5px; min-width: 2px; }
+.di-dom-gap { background: var(--di-deep); }
+.di-dom-dec { background: var(--di-mid); opacity: 0.55; }
+.di-dom-val { font-size: 11.5px; font-family: var(--mono); color: var(--ink-mute); white-space: nowrap; }
+
+@media (max-width: 920px) {
+  .di-hero { grid-template-columns: 1fr; }
 }

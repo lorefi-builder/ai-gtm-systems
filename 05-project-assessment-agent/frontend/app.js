@@ -75,6 +75,10 @@ function fmtMoney(n) {
 
 // ---------------------------------------------------------------- API layer
 async function api(path, body) {
+  // STATIC REPLAY: when static-data.js is present (deployed, no backend), return
+  // baked payloads instead of hitting the network. When the flag is falsy (local
+  // dev), this is a no-op and the live path below runs exactly as before.
+  if (window.STATIC_REPLAY) return staticApi(path, body);
   const opts = body
     ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
     : { method: "GET" };
@@ -95,6 +99,26 @@ async function api(path, body) {
     throw new Error(data.error || `Request failed (${res.status})`);
   }
   return data;
+}
+
+// Static-replay backend: resolve the baked payload for `path`, mirroring api()'s
+// resolved value (the parsed JSON body). Matches /spec, /review, /approve exactly
+// and /dashboard-data by base path (query string stripped). Unbaked paths reject
+// loudly so a missing capture fails visibly rather than silently.
+function staticApi(path, body) {
+  const responses = window.STATIC_RESPONSES || {};
+  const base = String(path).split("?")[0];   // strips ?date_from=...&cadence=... from /dashboard-data
+  const payload = responses[base];
+  if (payload === undefined) {
+    return Promise.reject(new Error(
+      `Static replay: no baked response for "${path}". This demo only replays the ` +
+      `captured happy path (/spec, /review, /approve) + /dashboard-data.`
+    ));
+  }
+  // POST /spec gets the full pre-roll delay so the loading animation reads; the
+  // rest resolve near-immediately for snappy buttons.
+  const delay = base === "/spec" ? (Number(window.STATIC_DELAY_MS) || 1400) : 200;
+  return new Promise((resolve) => setTimeout(() => resolve(payload), delay));
 }
 
 function showError(msg) {
@@ -164,9 +188,16 @@ function bubble(payload, opts = {}) {
 
 function buttonsHtml(payload, disabled) {
   const actions = (payload.blocks || []).filter((b) => b.type === "actions");
+  // Static replay only baked the happy path (no /reject, /regenerate), so hide
+  // those buttons — a viewer can't trigger an unbaked call. Live mode: the flag
+  // is falsy → suppress stays null → nothing is skipped (rendering unchanged).
+  const suppress = window.STATIC_REPLAY
+    ? new Set(["reject_spec", "regenerate_open", "regenerate_submit"])
+    : null;
   const out = [];
   for (const a of actions) {
     for (const btn of a.elements || []) {
+      if (suppress && suppress.has(btn.action_id)) continue;
       const cls = btn.style === "primary" ? "sl-btn sl-btn-primary"
                 : btn.style === "danger" ? "sl-btn sl-btn-danger"
                 : "sl-btn";
@@ -193,6 +224,7 @@ function setTab(tab) {
     review: ["#", "spec-review", "Approvers review drafted specs"],
     deal: ["#", "deal-tracking", "Approved specs post their new opportunities here"],
     dashboard: ["📊", "Dashboard", ""],
+    di: ["🛰", "Demand Intelligence", ""],
   }[tab];
   el("bar-hash").textContent = meta[0];
   el("bar-title").textContent = meta[1];
@@ -201,6 +233,13 @@ function setTab(tab) {
   el("bar-desc").style.display = meta[2] ? "" : "none";
 
   if (tab === "dashboard" && !state.dashboard) loadDashboard();
+  // DI reuses the cached /dashboard-data response (no second endpoint). If it
+  // isn't loaded yet, loadDashboard() renders the DI pane on completion (it
+  // checks state.tab); otherwise render straight from the cache.
+  if (tab === "di") {
+    if (!state.dashboard) loadDashboard();
+    else renderDI();
+  }
 }
 
 function bumpBadge(which) {
@@ -565,12 +604,151 @@ function buildDashQuery() {
 
 async function loadDashboard() {
   el("dash-root").innerHTML = `<div class="dash-loading">Loading dashboard from the warehouse…</div>`;
+  if (state.tab === "di") el("di-root").innerHTML = `<div class="dash-loading">Loading demand intelligence…</div>`;
   try {
     state.dashboard = await api("/dashboard-data" + buildDashQuery());
     renderDashboard();
+    if (state.tab === "di") renderDI();   // DI reflects the same (re)loaded data
   } catch (e) {
-    el("dash-root").innerHTML = `<div class="dash-error">Couldn't load /dashboard-data — ${escapeHtml(e.message)}</div>`;
+    const msg = `<div class="dash-error">Couldn't load /dashboard-data — ${escapeHtml(e.message)}</div>`;
+    el("dash-root").innerHTML = msg;
+    if (state.tab === "di") el("di-root").innerHTML = msg;
   }
+}
+
+// ---------------------------------------------------------------- TAB 5: Demand Intelligence
+// Renders from the cached state.dashboard.demand_intelligence — no second fetch.
+function renderDI() {
+  const root = el("di-root");
+  if (!root) return;
+  const d = state.dashboard;
+  const di = d && d.demand_intelligence;
+  if (!di) {
+    root.innerHTML = `<div class="dash-error">No demand-intelligence data — open the Dashboard tab first to load it.</div>`;
+    return;
+  }
+  const h = di.headline || {};
+  root.innerHTML = `
+    <div class="dash-head"><h1>Demand Intelligence</h1>
+      <div class="freshness">🛈 Capability-gap = RED capability × escalation flag. Declined = rejected. Dollars are estimated value at discovery.</div>
+    </div>
+    ${diHeadlineHtml(h)}
+    <div class="pillar">
+      <div class="pillar-title"><h2>Capability-gap demand — domain × segment</h2>
+        <span class="sub">estimated value · RED + escalated</span></div>
+      ${diHeatmapHtml(di.heatmap || [])}
+    </div>
+    <div class="pillar">
+      <div class="cards c2">
+        <div class="card"><h3>Gap demand by escalation reason</h3>${diReasonBarsHtml(di.by_reason || [])}</div>
+        <div class="card"><h3>Gap vs. declined by domain</h3>${diDomainHtml(di.by_domain || [])}</div>
+      </div>
+    </div>`;
+}
+
+// Hero row — 3 prominent stat tiles (distinct from the dashboard scorecards).
+function diHeadlineHtml(h) {
+  const tiles = [
+    { v: fmtMoney(h.gap_value || 0), l: "Capability-Gap Demand",
+      sub: `${(Number(h.gap_specs) || 0).toLocaleString()} specs · RED + escalated`, cls: "di-gap" },
+    { v: fmtMoney(h.declined_value || 0), l: "Declined Demand",
+      sub: `${(Number(h.declined_specs) || 0).toLocaleString()} specs turned away`, cls: "di-dec" },
+    { v: h.top_domain || "—", l: "Top Gap Domain", sub: "highest gap $", cls: "di-top" },
+  ];
+  return `<div class="di-hero">${tiles.map((t) =>
+    `<div class="di-hero-tile ${t.cls}">
+       <div class="dh-v">${escapeHtml(t.v)}</div>
+       <div class="dh-l">${escapeHtml(t.l)}</div>
+       <div class="dh-sub">${escapeHtml(t.sub)}</div>
+     </div>`).join("")}</div>`;
+}
+
+// Gap heatmap — hand-rolled CSS grid. Rows = domains (by row-total desc),
+// columns = segments (canonical order, derived from data). Cell background
+// intensity ∝ gap $ via heatColor() (sqrt scale lifts mid cells); empty cells muted.
+function diHeatmapHtml(cells) {
+  if (!cells.length) return `<div class="note">No capability-gap demand in the current range.</div>`;
+  const SEG_ORDER = ["Enterprise", "Mid-Market", "SMB"];
+  const present = [...new Set(cells.map((c) => c.segment))];
+  const segs = SEG_ORDER.filter((s) => present.includes(s))
+    .concat(present.filter((s) => !SEG_ORDER.includes(s)));   // any unexpected segments last
+  const cellMap = {}, rowTotal = {};
+  cells.forEach((c) => {
+    (cellMap[c.domain] = cellMap[c.domain] || {})[c.segment] = c;
+    rowTotal[c.domain] = (rowTotal[c.domain] || 0) + (c.value || 0);
+  });
+  const domains = Object.keys(rowTotal).sort((a, b) => rowTotal[b] - rowTotal[a]);
+  const maxVal = Math.max(...cells.map((c) => c.value || 0), 1);
+
+  const cols = `minmax(130px, 1.3fr) repeat(${segs.length}, 1fr)`;
+  let grid = `<div class="heatmap" style="grid-template-columns:${cols}">`;
+  grid += `<div class="hm-corner">domain ＼ segment</div>`;
+  segs.forEach((s) => { grid += `<div class="hm-colhead">${escapeHtml(s)}</div>`; });
+  domains.forEach((dom) => {
+    grid += `<div class="hm-rowhead">${escapeHtml(dom)}</div>`;
+    segs.forEach((s) => {
+      const c = cellMap[dom] && cellMap[dom][s];
+      if (!c || !(c.value > 0)) { grid += `<div class="hm-cell hm-empty">—</div>`; return; }
+      const t = Math.sqrt((c.value || 0) / maxVal);
+      const dark = t > 0.45;
+      grid += `<div class="hm-cell" style="background:${heatColor(t)};color:${dark ? "#fff" : "var(--ink)"}">
+        <div class="hm-val">${fmtMoney(c.value)}</div>
+        <div class="hm-det">${Number(c.specs) || 0} specs · ${Number(c.declined_specs) || 0} declined</div>
+      </div>`;
+    });
+  });
+  grid += `</div>`;
+  const legend = `<div class="hm-legend">
+    <span class="hm-legend-lbl">$0</span>
+    <span class="hm-legend-bar"></span>
+    <span class="hm-legend-lbl">${fmtMoney(maxVal)}</span>
+    <span class="hm-legend-note">deeper red = higher capability-gap $</span>
+  </div>`;
+  return grid + legend;
+}
+
+// pale-warm → brand-red ramp for the gap heatmap (warm/red reads as "gap").
+// Deep endpoint is the app's brand red #c2194e (= var(--slack-red-d) = --di-deep);
+// the legend gradient bar terminates at the same rgb. Pale endpoint + sqrt scale
+// are unchanged.
+function heatColor(t) {
+  t = Math.max(0, Math.min(1, t));
+  const a = [251, 233, 226], b = [194, 25, 78];   // #FBE9E2 -> #c2194e (brand red)
+  const c = a.map((av, i) => Math.round(av + (b[i] - av) * t));
+  return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+}
+
+// Horizontal bars from by_reason ($ value, sorted desc). Tolerant of any buckets.
+function diReasonBarsHtml(rows) {
+  if (!rows.length) return `<div class="note">No escalation-flagged gap demand in range.</div>`;
+  const max = Math.max(...rows.map((r) => r.value || 0), 1);
+  return `<div class="di-bars">${rows.map((r) => {
+    const w = Math.round((r.value || 0) / max * 100);
+    return `<div class="di-bar-row">
+      <div class="di-bar-lbl">${escapeHtml(prettyKey(r.reason))}</div>
+      <div class="di-bar-track"><div class="di-bar-fill" style="width:${w}%"></div></div>
+      <div class="di-bar-val">${fmtMoney(r.value)} · ${Number(r.specs) || 0}</div>
+    </div>`;
+  }).join("")}</div>`;
+}
+
+// Gap vs. declined by domain — grouped bars (gap = burgundy, declined = red).
+function diDomainHtml(rows) {
+  if (!rows.length) return `<div class="note">No gap demand by domain in range.</div>`;
+  const max = Math.max(...rows.map((r) => Math.max(r.gap_value || 0, r.declined_value || 0)), 1);
+  const pct = (v) => Math.round((v || 0) / max * 100);
+  return `<div class="di-dom">
+    <div class="di-dom-legend"><span class="dot dot-gap"></span>Gap&nbsp;&nbsp;<span class="dot dot-dec"></span>Declined</div>
+    ${rows.map((r) => `
+      <div class="di-dom-row">
+        <div class="di-dom-lbl">${escapeHtml(r.domain)}</div>
+        <div class="di-dom-bars">
+          <div class="di-dom-bar di-dom-gap" style="width:${pct(r.gap_value)}%" title="Gap ${fmtMoney(r.gap_value)} · ${Number(r.gap_specs) || 0} specs"></div>
+          <div class="di-dom-bar di-dom-dec" style="width:${pct(r.declined_value)}%" title="Declined ${fmtMoney(r.declined_value)} · ${Number(r.declined_specs) || 0} specs"></div>
+        </div>
+        <div class="di-dom-val">${fmtMoney(r.gap_value)} / ${fmtMoney(r.declined_value)}</div>
+      </div>`).join("")}
+  </div>`;
 }
 
 function renderDashboard() {
@@ -579,16 +757,26 @@ function renderDashboard() {
   const fil = d.filters || { available_use_cases: [], available_segments: [], available_regions: [] };
   const s2 = d.spec_to_opportunity;
   const revNote = (d.opportunity_to_won.revenue_per_win_type || {}).note || "";
+  // STATIC REPLAY: the filter bar is a fixed snapshot (every selection returns
+  // the same baked payload), so show it visibly disabled with an explainer note
+  // instead of letting a viewer trigger a no-op. Live mode: both are empty/absent.
+  const fbClass = window.STATIC_REPLAY ? "filter-bar static-locked" : "filter-bar";
+  const fbNote = window.STATIC_REPLAY
+    ? `<div class="fb-static-note">🔒 Filters are interactive in the live demo — this shared view is a fixed snapshot.</div>`
+    : "";
+  // Refresh also refetches, so disable it in static mode (it's already inert —
+  // attachDashFilters wires nothing — this just stops it from looking clickable).
+  const refreshAttr = window.STATIC_REPLAY ? ' disabled title="Fixed snapshot — refresh disabled"' : "";
 
   el("dash-root").innerHTML = `
     <div class="dash-head">
       <h1>SpecOps — Pipeline Analytics</h1>
-      <button class="refresh-btn" id="dash-refresh">↻ Refresh</button>
+      <button class="refresh-btn" id="dash-refresh"${refreshAttr}>↻ Refresh</button>
       <div class="freshness">🛈 ${escapeHtml(d.data_freshness || "")}</div>
     </div>
 
     <!-- GLOBAL FILTER BAR -->
-    <div class="filter-bar">
+    <div class="${fbClass}">
       <div class="fb-group">
         <span class="fb-label">Range</span>
         <input type="date" id="f-from" value="${f.date_from}" />
@@ -618,6 +806,7 @@ function renderDashboard() {
         ${multiSelectHtml("segment", fil.available_segments, f.segment, "All segments")}
         ${multiSelectHtml("region", fil.available_regions, f.region, "All regions")}
       </div>
+      ${fbNote}
     </div>
 
     <!-- SCORECARD ROW (from business_funnel) -->
@@ -880,6 +1069,11 @@ function velocityFlowHtml(s2) {
 }
 
 function attachDashFilters() {
+  // STATIC REPLAY: wire NO handlers — the filter bar is visibly disabled and must
+  // not trigger a no-op loadDashboard() (it would refetch the same baked snapshot).
+  // The dashboard already rendered from the baked payload; drawCharts runs after
+  // this. Live mode (flag falsy): no early return → everything wires as today.
+  if (window.STATIC_REPLAY) return;
   el("dash-refresh").addEventListener("click", () => { state.dashboard = null; loadDashboard(); });
   // Manually editing either date input means the range no longer matches a
   // preset, so clear the active-preset highlight.
